@@ -47,6 +47,13 @@ pub struct FileStat {
 // Remote PTY
 // ---------------------------------------------------------------------------
 
+/// Owned output, input, and resize channels returned by [`RemotePty::into_parts`].
+pub type RemotePtyParts = (
+    Box<dyn AsyncRead + Unpin + Send>,
+    Box<dyn AsyncWrite + Unpin + Send>,
+    tokio::sync::mpsc::Sender<(u16, u16)>,
+);
+
 /// Handle to a pseudo-terminal running on the remote side.
 pub struct RemotePty {
     writer: Box<dyn AsyncWrite + Unpin + Send>,
@@ -98,13 +105,7 @@ impl RemotePty {
 
     /// Split ownership so reading output never holds the lock needed for input
     /// or a window resize.
-    pub fn into_parts(
-        self,
-    ) -> (
-        Box<dyn AsyncRead + Unpin + Send>,
-        Box<dyn AsyncWrite + Unpin + Send>,
-        tokio::sync::mpsc::Sender<(u16, u16)>,
-    ) {
+    pub fn into_parts(self) -> RemotePtyParts {
         (self.reader, self.writer, self.resize_tx)
     }
 }

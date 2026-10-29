@@ -907,7 +907,7 @@ impl SshTransport {
                 russh::ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
                 russh::ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
                 russh::ChannelMsg::ExitStatus { exit_status } => {
-                    exit_code = i32::try_from(exit_status).unwrap_or(-1)
+                    exit_code = i32::try_from(exit_status).unwrap_or(-1);
                 }
                 russh::ChannelMsg::ExitSignal { error_message, .. } => {
                     exit_code = -1;

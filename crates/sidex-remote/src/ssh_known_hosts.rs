@@ -159,13 +159,13 @@ fn check_known_host_path(
             Some("@revoked") if public_key == *key => {
                 bail!("SSH_HOST_KEY_REVOKED: {}", key.fingerprint())
             }
-            Some("@cert-authority") | Some("@revoked") => continue,
+            Some("@cert-authority" | "@revoked") => {}
             Some(marker) => bail!("Unsupported known_hosts marker {marker}"),
             None => recorded.push(public_key),
         }
     }
     // Hosts may legitimately list more than one algorithm or rotated key.
-    if recorded.iter().any(|known| *known == *key) {
+    if recorded.contains(key) {
         return Ok(KnownHostStatus::Trusted);
     }
     let fingerprint = format!("SHA256:{}", key.fingerprint());
@@ -182,7 +182,7 @@ fn matches_hosts(host: &str, patterns: &str) -> bool {
     let mut matched = false;
     for raw in patterns.split(',') {
         let (negative, pattern) = raw.strip_prefix('!').map_or((false, raw), |p| (true, p));
-        let matches = if let Some(hashed) = pattern.strip_prefix("|1|") {
+        let applies = if let Some(hashed) = pattern.strip_prefix("|1|") {
             hashed.split_once('|').is_some_and(|(salt, expected)| {
                 let (Ok(salt), Ok(expected)) = (STANDARD.decode(salt), STANDARD.decode(expected))
                 else {
@@ -194,10 +194,10 @@ fn matches_hosts(host: &str, patterns: &str) -> bool {
         } else {
             wildcard_match(pattern.as_bytes(), host.as_bytes())
         };
-        if matches && negative {
+        if applies && negative {
             return false;
         }
-        matched |= matches;
+        matched |= applies;
     }
     matched
 }

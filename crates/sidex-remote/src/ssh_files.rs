@@ -135,6 +135,10 @@ impl SftpClient {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Matches the owned error callback expected by Result::map_err"
+)]
 fn map_error(error: Error) -> anyhow::Error {
     let code = match &error {
         Error::Status(status) if status.status_code == StatusCode::NoSuchFile => "FileNotFound",
@@ -182,10 +186,10 @@ fn guarded_mutation_path(path: &str) -> Result<()> {
 pub(super) fn file_type(metadata: &FileAttributes) -> u8 {
     // Compare the complete POSIX type bits. A socket must not be treated as a
     // directory merely because its mode contains S_IFDIR's bit.
-    match metadata.permissions.unwrap_or(0) & 0o170000 {
-        0o040000 => 2,
-        0o100000 => 1,
-        0o120000 => 64,
+    match metadata.permissions.unwrap_or(0) & 0o170_000 {
+        0o040_000 => 2,
+        0o100_000 => 1,
+        0o120_000 => 64,
         _ => 0,
     }
 }
@@ -278,10 +282,10 @@ pub(super) async fn write(
     } else {
         path.to_string()
     };
-    let target_metadata = if target != path {
-        Some(sftp.metadata(&target).await?)
-    } else {
+    let target_metadata = if target == path {
         metadata
+    } else {
+        Some(sftp.metadata(&target).await?)
     };
     let temporary = temporary_sibling(&target);
     let mut attributes = FileAttributes::empty();
@@ -430,30 +434,7 @@ pub(super) async fn request(sftp: &SftpClient, request: Value) -> Result<Value> 
             .await?;
             Ok(Value::Null)
         }
-        "readdir" => {
-            let metadata = sftp.metadata(&path).await?;
-            if file_type(&metadata) != 2 {
-                bail!("FileNotADirectory: {path}");
-            }
-            let mut entries = Vec::new();
-            for entry in sftp.read_dir(&path).await? {
-                let mut kind = file_type(&entry.attrs);
-                if kind == 64 {
-                    if let Ok(target) = sftp
-                        .metadata(&format!(
-                            "{}/{}",
-                            path.trim_end_matches('/'),
-                            entry.filename
-                        ))
-                        .await
-                    {
-                        kind |= file_type(&target);
-                    }
-                }
-                entries.push(json!([entry.filename, kind]));
-            }
-            Ok(Value::Array(entries))
-        }
+        "readdir" => read_directory(sftp, &path).await,
         "mkdir" => {
             if let Some(existing) = sftp.optional_metadata(&path).await? {
                 if file_type(&existing) != 2 {
@@ -502,6 +483,31 @@ pub(super) async fn request(sftp: &SftpClient, request: Value) -> Result<Value> 
         }
         _ => bail!("Unavailable: unknown SFTP filesystem operation"),
     }
+}
+
+async fn read_directory(sftp: &SftpClient, path: &str) -> Result<Value> {
+    let metadata = sftp.metadata(path).await?;
+    if file_type(&metadata) != 2 {
+        bail!("FileNotADirectory: {path}");
+    }
+    let mut entries = Vec::new();
+    for entry in sftp.read_dir(path).await? {
+        let mut kind = file_type(&entry.attrs);
+        if kind == 64 {
+            if let Ok(target) = sftp
+                .metadata(&format!(
+                    "{}/{}",
+                    path.trim_end_matches('/'),
+                    entry.filename
+                ))
+                .await
+            {
+                kind |= file_type(&target);
+            }
+        }
+        entries.push(json!([entry.filename, kind]));
+    }
+    Ok(Value::Array(entries))
 }
 
 async fn snapshot(
@@ -588,7 +594,12 @@ mod tests {
     #[test]
     fn socket_and_symlink_modes_do_not_masquerade_as_directories() {
         let mut attrs = FileAttributes::empty();
-        for (mode, expected) in [(0o040755, 2), (0o100644, 1), (0o120777, 64), (0o140755, 0)] {
+        for (mode, expected) in [
+            (0o040_755, 2),
+            (0o100_644, 1),
+            (0o120_777, 64),
+            (0o140_755, 0),
+        ] {
             attrs.permissions = Some(mode);
             assert_eq!(file_type(&attrs), expected);
         }
