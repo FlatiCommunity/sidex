@@ -1,11 +1,10 @@
 import type { Plugin } from 'vite';
-import * as fs from 'fs';
-import * as path from 'path';
+import { collectNlsCalls, collectNlsEntries, moduleId } from './nls-utils.mjs';
 
 interface NlsEntry {
 	module: string;
 	key: string;
-	msg: string;
+	message: string;
 }
 
 export function nlsPlugin(): Plugin {
@@ -13,82 +12,28 @@ export function nlsPlugin(): Plugin {
 	const dedupIndex = new Map<string, number>();
 	let isBuild = false;
 
-	function getOrAddIndex(module: string, key: string, msg: string): number {
-		const dedupKey = `${module}\0${key}\0${msg}`;
-		const existing = dedupIndex.get(dedupKey);
-		if (existing !== undefined) {
-			return existing;
+	function getOrAddIndex(module: string, key: string, message: string): number {
+		const identity = `${module}\0${key}\0${message}`;
+		let index = dedupIndex.get(identity);
+		if (index === undefined) {
+			index = entries.length;
+			entries.push({ module, key, message });
+			dedupIndex.set(identity, index);
 		}
-		const idx = entries.length;
-		entries.push({ module, key, msg });
-		dedupIndex.set(dedupKey, idx);
-		return idx;
-	}
-
-	function prescanSourceFiles() {
-		const srcDir = path.resolve(process.cwd(), 'src/vs');
-		const files = walkDir(srcDir);
-		let count = 0;
-		for (const file of files) {
-			const module = toNlsModuleId(file);
-			if (!file.endsWith('.ts')) {
-				continue;
-			}
-			const code = fs.readFileSync(file, 'utf-8');
-			if (!code.includes('localize')) {
-				continue;
-			}
-			const re = /\blocalize2?\s*\(/g;
-			let m: RegExpExecArray | null;
-			while ((m = re.exec(code)) !== null) {
-				const argsStart = m.index + m[0].length;
-				const firstArgEnd = findFirstArgEnd(code, argsStart);
-				if (firstArgEnd < 0) {
-					continue;
-				}
-				const key = extractKey(code.slice(argsStart, firstArgEnd).trim());
-				if (!key) {
-					continue;
-				}
-				const afterComma = skipWhitespace(code, firstArgEnd + 1);
-				const strEnd = readStringLiteral(code, afterComma);
-				if (strEnd < 0) {
-					continue;
-				}
-				const msg = unquote(code.slice(afterComma, strEnd + 1));
-				getOrAddIndex(module, key, msg);
-				count++;
-			}
-		}
-		console.log(
-			`[vite-plugin-nls] Pre-scanned ${files.length} files, found ${count} NLS entries (${entries.length} unique)`
-		);
-	}
-
-	function walkDir(dir: string): string[] {
-		const results: string[] = [];
-		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-			const full = path.join(dir, entry.name);
-			if (entry.isDirectory()) {
-				results.push(...walkDir(full));
-			} else {
-				results.push(full);
-			}
-		}
-		return results;
+		return index;
 	}
 
 	function serializeEntries(): string {
 		const modules: string[] = [];
 		const moduleIds = new Map<string, number>();
-		const messages = entries.map(({ module, key, msg }): [number, string, string] => {
+		const messages = entries.map(({ module, key, message }): [number, string, string] => {
 			let id = moduleIds.get(module);
 			if (id === undefined) {
 				id = modules.length;
 				modules.push(module);
 				moduleIds.set(module, id);
 			}
-			return [id, key, msg];
+			return [id, key, message];
 		});
 		return JSON.stringify({ modules, messages });
 	}
@@ -96,177 +41,40 @@ export function nlsPlugin(): Plugin {
 	return {
 		name: 'vite-plugin-nls',
 		enforce: 'pre',
-
-		config(_cfg, env) {
-			isBuild = env.command === 'build';
+		config(_config, environment) {
+			isBuild = environment.command === 'build';
 		},
-
 		configureServer(server) {
-			server.middlewares.use('/nls.messages.json', (_req, res) => {
-				res.setHeader('Content-Type', 'application/json');
-				res.end(serializeEntries());
+			server.middlewares.use('/nls.messages.json', (_request, response) => {
+				response.setHeader('Content-Type', 'application/json');
+				response.setHeader('Cache-Control', 'no-store');
+				response.end(serializeEntries());
 			});
 		},
-
 		buildStart() {
+			// Vite can reuse a plugin instance for watch/rebuild. Old indices must not leak into a new build.
+			entries.length = 0;
+			dedupIndex.clear();
 			if (!isBuild) {
-				prescanSourceFiles();
+				for (const entry of collectNlsEntries()) getOrAddIndex(entry.module, entry.key, entry.message);
 			}
 		},
-
 		transform(code, id) {
-			if (!id.includes('/src/vs/') || !id.endsWith('.ts')) {
-				return null;
+			const filename = id.split('?')[0].replace(/\\/g, '/');
+			if (!filename.includes('/src/vs/') || !filename.endsWith('.ts') || !code.includes('localize')) return null;
+			const calls = collectNlsCalls(code, filename);
+			if (calls.length === 0) return null;
+			const module = moduleId(filename);
+			let output = '';
+			let cursor = 0;
+			for (const call of calls) {
+				output += code.slice(cursor, call.start) + getOrAddIndex(module, call.key, call.message);
+				cursor = call.end;
 			}
-			if (!code.includes('localize')) {
-				return null;
-			}
-
-			let result = '';
-			let pos = 0;
-			let didChange = false;
-
-			const module = toNlsModuleId(id);
-
-			const re = /\blocalize2?\s*\(/g;
-			let m: RegExpExecArray | null;
-
-			while ((m = re.exec(code)) !== null) {
-				const argsStart = m.index + m[0].length;
-				const firstArgEnd = findFirstArgEnd(code, argsStart);
-				if (firstArgEnd < 0) {
-					continue;
-				}
-
-				const key = extractKey(code.slice(argsStart, firstArgEnd).trim());
-				if (!key) {
-					continue;
-				}
-
-				const afterComma = skipWhitespace(code, firstArgEnd + 1);
-				const strEnd = readStringLiteral(code, afterComma);
-				if (strEnd < 0) {
-					continue;
-				}
-
-				const msg = unquote(code.slice(afterComma, strEnd + 1));
-				const idx = getOrAddIndex(module, key, msg);
-
-				result += code.slice(pos, argsStart);
-				result += String(idx);
-				pos = firstArgEnd;
-				didChange = true;
-			}
-
-			if (!didChange) {
-				return null;
-			}
-
-			result += code.slice(pos);
-			return { code: result };
+			return { code: output + code.slice(cursor), map: null };
 		},
-
 		generateBundle() {
-			if (entries.length > 0) {
-				this.emitFile({
-					type: 'asset',
-					fileName: 'nls.messages.json',
-					source: serializeEntries()
-				});
-			}
+			this.emitFile({ type: 'asset', fileName: 'nls.messages.json', source: serializeEntries() });
 		}
 	};
-}
-
-function toNlsModuleId(file: string): string {
-	return path
-		.relative(path.resolve(process.cwd(), 'src'), file)
-		.replace(/\\/g, '/')
-		.replace(/\.(?:ts|js)$/, '');
-}
-
-function extractKey(arg: string): string | null {
-	if (arg.startsWith('{')) {
-		const m = arg.match(/\bkey\s*:\s*(['"`])([^'"`]+)\1/);
-		return m ? m[2] : null;
-	}
-	if ((arg.startsWith("'") || arg.startsWith('"') || arg.startsWith('`')) && arg.length > 2) {
-		return arg.slice(1, -1);
-	}
-	return null;
-}
-
-function findFirstArgEnd(code: string, start: number): number {
-	let depth = 0;
-	let inStr: string | null = null;
-
-	for (let i = start; i < code.length; i++) {
-		const ch = code[i];
-
-		if (inStr) {
-			if (ch === '\\') {
-				i++;
-				continue;
-			}
-			if (ch === inStr) {
-				inStr = null;
-			}
-			continue;
-		}
-
-		if (ch === '"' || ch === "'" || ch === '`') {
-			inStr = ch;
-			continue;
-		}
-		if (ch === '(' || ch === '{' || ch === '[') {
-			depth++;
-			continue;
-		}
-		if (ch === ')' || ch === '}' || ch === ']') {
-			if (depth === 0) {
-				return -1;
-			}
-			depth--;
-			continue;
-		}
-		if (ch === ',' && depth === 0) {
-			return i;
-		}
-	}
-	return -1;
-}
-
-function skipWhitespace(code: string, pos: number): number {
-	while (pos < code.length && /\s/.test(code[pos])) {
-		pos++;
-	}
-	return pos;
-}
-
-function readStringLiteral(code: string, pos: number): number {
-	const quote = code[pos];
-	if (quote !== '"' && quote !== "'" && quote !== '`') {
-		return -1;
-	}
-	for (let i = pos + 1; i < code.length; i++) {
-		const ch = code[i];
-		if (ch === '\\') {
-			i++;
-			continue;
-		}
-		if (ch === quote) {
-			return i;
-		}
-	}
-	return -1;
-}
-
-function unquote(literal: string): string {
-	return literal
-		.slice(1, -1)
-		.replace(/\\'/g, "'")
-		.replace(/\\"/g, '"')
-		.replace(/\\n/g, '\n')
-		.replace(/\\t/g, '\t')
-		.replace(/\\\\/g, '\\');
 }

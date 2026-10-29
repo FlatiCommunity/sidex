@@ -36,7 +36,7 @@ function _format(message: string, args: (string | number | boolean | undefined |
 		result = message;
 	} else {
 		result = message.replace(/\{(\d+)\}/g, (match, rest) => {
-			const index = rest[0];
+			const index = Number(rest);
 			const arg = args[index];
 			let result = match;
 			if (typeof arg === 'string') {
