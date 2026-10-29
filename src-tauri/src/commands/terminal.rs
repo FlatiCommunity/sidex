@@ -413,7 +413,7 @@ pub fn terminal_spawn(
                         break;
                     }
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Ok(_) | Err(_) => break,
             }
         }

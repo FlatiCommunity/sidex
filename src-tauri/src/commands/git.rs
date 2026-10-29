@@ -351,6 +351,7 @@ pub async fn git_show(
 }
 
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)] // Tauri owns deserialized IPC arguments.
 pub fn git_repository_root(path: String) -> Result<Option<String>, String> {
     validate_path(&path)?;
     Ok(sidex_git::find_repo_root(Path::new(&path)).map(|root| root.to_string_lossy().into_owned()))
