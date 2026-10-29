@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Result};
@@ -51,7 +52,7 @@ pub struct ConnectionInfo {
 // ---------------------------------------------------------------------------
 
 struct Entry {
-    transport: Box<dyn RemoteTransport>,
+    transport: Arc<dyn RemoteTransport>,
     kind: ConnectionKind,
     label: String,
     connected_at: Instant,
@@ -92,7 +93,7 @@ impl RemoteManager {
         self.connections.insert(
             id,
             Entry {
-                transport,
+                transport: Arc::from(transport),
                 kind,
                 label,
                 connected_at: Instant::now(),
@@ -126,6 +127,43 @@ impl RemoteManager {
     ) -> Result<ConnectionId> {
         let transport = SshTransport::connect_as(user, host, port, auth, keepalive_secs).await?;
         let label = format!("{user}@{host}:{port}");
+        Ok(self.insert(Box::new(transport), ConnectionKind::Ssh, label))
+    }
+
+    /// A newly encountered host requires the exact fingerprint approved by the
+    /// caller. A changed key is always rejected and must be resolved explicitly.
+    pub async fn connect_ssh_as_trusted(
+        &mut self,
+        user: &str,
+        host: &str,
+        port: u16,
+        auth: SshAuth,
+        keepalive_secs: Option<u64>,
+        trusted_fingerprint: Option<String>,
+    ) -> Result<ConnectionId> {
+        let transport = SshTransport::connect_as_trusted(
+            user,
+            host,
+            port,
+            auth,
+            keepalive_secs,
+            trusted_fingerprint,
+        )
+        .await?;
+        let label = format!("{user}@{host}:{port}");
+        // Stable labels let a restored workspace reconnect without accidentally
+        // binding to another connection's ephemeral numeric identifier.
+        let previous: Vec<_> = self
+            .connections
+            .iter()
+            .filter(|(_, entry)| entry.kind == ConnectionKind::Ssh && entry.label == label)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in previous {
+            if let Some(entry) = self.connections.remove(&id) {
+                let _ = entry.transport.disconnect().await;
+            }
+        }
         Ok(self.insert(Box::new(transport), ConnectionKind::Ssh, label))
     }
 
@@ -185,6 +223,15 @@ impl RemoteManager {
     /// Retrieve a reference to the transport behind a connection.
     pub fn get(&self, id: ConnectionId) -> Option<&dyn RemoteTransport> {
         self.connections.get(&id).map(|e| &*e.transport)
+    }
+
+    /// Clone the transport before awaiting network I/O so one connection never
+    /// blocks all other remote windows behind the manager lock.
+    pub fn get_by_label(&self, label: &str) -> Option<Arc<dyn RemoteTransport>> {
+        self.connections
+            .values()
+            .find(|entry| entry.label == label)
+            .map(|entry| Arc::clone(&entry.transport))
     }
 
     /// List all active connections.

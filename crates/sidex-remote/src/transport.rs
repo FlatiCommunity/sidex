@@ -5,6 +5,7 @@
 //! backend is active.
 
 use std::path::Path;
+use std::sync::{atomic::AtomicI32, Arc};
 use std::time::SystemTime;
 
 use anyhow::Result;
@@ -51,6 +52,7 @@ pub struct RemotePty {
     writer: Box<dyn AsyncWrite + Unpin + Send>,
     reader: Box<dyn AsyncRead + Unpin + Send>,
     resize_tx: tokio::sync::mpsc::Sender<(u16, u16)>,
+    exit_code: Arc<AtomicI32>,
 }
 
 impl RemotePty {
@@ -64,6 +66,7 @@ impl RemotePty {
             writer,
             reader,
             resize_tx,
+            exit_code: Arc::new(AtomicI32::new(-1)),
         }
     }
 
@@ -86,6 +89,24 @@ impl RemotePty {
         self.resize_tx.send((cols, rows)).await?;
         Ok(())
     }
+
+    /// The status becomes available before output reaches EOF. `-1` means the
+    /// server closed the channel without reporting a process exit status.
+    pub fn exit_code_handle(&self) -> Arc<AtomicI32> {
+        Arc::clone(&self.exit_code)
+    }
+
+    /// Split ownership so reading output never holds the lock needed for input
+    /// or a window resize.
+    pub fn into_parts(
+        self,
+    ) -> (
+        Box<dyn AsyncRead + Unpin + Send>,
+        Box<dyn AsyncWrite + Unpin + Send>,
+        tokio::sync::mpsc::Sender<(u16, u16)>,
+    ) {
+        (self.reader, self.writer, self.resize_tx)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +119,11 @@ impl RemotePty {
 /// connection manager and shared across tasks.
 #[async_trait::async_trait]
 pub trait RemoteTransport: Send + Sync {
+    /// Structured filesystem operations preserve binary bytes and remote names.
+    async fn file_request(&self, _request: serde_json::Value) -> Result<serde_json::Value> {
+        anyhow::bail!("Unavailable: this remote transport has no filesystem provider")
+    }
+
     /// Execute a shell command on the remote and collect its output.
     async fn exec(&self, command: &str) -> Result<ExecOutput>;
 

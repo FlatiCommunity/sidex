@@ -15,6 +15,10 @@ thiserror = "2"
 log = "0.4"
 russh = { workspace = true }
 russh-keys = "0.46"
+russh-sftp = "2.1.1"
+base64 = "0.22"
+hmac = "0.12"
+sha1 = "0.10"
 bollard = { workspace = true }
 tokio-tungstenite = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }

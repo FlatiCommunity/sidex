@@ -1,24 +1,29 @@
 //! SSH remote transport backend.
 //!
-//! Full implementation with connection pooling, keepalive, `ProxyJump`,
-//! agent forwarding, known-hosts checking, environment variables,
-//! and bidirectional port forwarding.
+//! Verified host keys, native agent authentication, SFTP and interactive PTYs.
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::io::BufRead;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use files::SftpClient;
 use russh::client;
 use russh_keys::key;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
+
+#[path = "ssh_known_hosts.rs"]
+mod known_hosts;
+pub use known_hosts::{check_known_host, HostKeyInfo, KnownHostStatus};
+
+#[path = "ssh_files.rs"]
+mod files;
 
 use crate::transport::{DirEntry, ExecOutput, FileStat, RemotePty, RemoteTransport};
 
@@ -26,7 +31,7 @@ use crate::transport::{DirEntry, ExecOutput, FileStat, RemotePty, RemoteTranspor
 // Auth & config types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum SshAuth {
     Password(String),
     KeyFile {
@@ -35,6 +40,20 @@ pub enum SshAuth {
     },
     Agent,
     KeyboardInteractive,
+}
+
+impl std::fmt::Debug for SshAuth {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Password(_) => formatter.write_str("Password([redacted])"),
+            Self::KeyFile { path, .. } => formatter
+                .debug_struct("KeyFile")
+                .field("path", path)
+                .finish_non_exhaustive(),
+            Self::Agent => formatter.write_str("Agent"),
+            Self::KeyboardInteractive => formatter.write_str("KeyboardInteractive"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,70 +333,6 @@ pub struct SshConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Known-hosts
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KnownHostStatus {
-    Trusted,
-    Unknown {
-        fingerprint: String,
-    },
-    Changed {
-        old_fingerprint: String,
-        new_fingerprint: String,
-    },
-}
-
-/// Check a host key against `~/.ssh/known_hosts`.
-pub fn check_known_host(
-    hostname: &str,
-    port: u16,
-    _server_key: &key::PublicKey,
-) -> KnownHostStatus {
-    let path = match dirs::home_dir() {
-        Some(h) => h.join(".ssh/known_hosts"),
-        None => {
-            return KnownHostStatus::Unknown {
-                fingerprint: "unknown".into(),
-            }
-        }
-    };
-
-    let target = if port == 22 {
-        hostname.to_string()
-    } else {
-        format!("[{hostname}]:{port}")
-    };
-
-    let fp = "SHA256:<key>".to_string();
-
-    let Ok(file) = std::fs::File::open(&path) else {
-        return KnownHostStatus::Unknown { fingerprint: fp };
-    };
-
-    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
-        let line = line.trim().to_string();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.splitn(3, ' ').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-        let hosts = parts[0];
-        if hosts
-            .split(',')
-            .any(|h| h.trim() == target || h.trim() == hostname)
-        {
-            return KnownHostStatus::Trusted;
-        }
-    }
-
-    KnownHostStatus::Unknown { fingerprint: fp }
-}
-
-// ---------------------------------------------------------------------------
 // SSH config parsing
 // ---------------------------------------------------------------------------
 
@@ -477,18 +432,154 @@ pub fn parse_ssh_config(path: &Path) -> Result<Vec<SshHostConfig>> {
 // Client handler
 // ---------------------------------------------------------------------------
 
-pub struct ClientHandler;
+pub struct ClientHandler {
+    host: String,
+    port: u16,
+    trusted_fingerprint: Option<String>,
+    probe: Option<Arc<std::sync::Mutex<Option<HostKeyInfo>>>>,
+}
+
+impl ClientHandler {
+    fn new(host: &str, port: u16, trusted_fingerprint: Option<String>) -> Self {
+        Self {
+            host: host.into(),
+            port,
+            trusted_fingerprint,
+            probe: None,
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl client::Handler for ClientHandler {
     type Error = anyhow::Error;
 
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &key::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
+    async fn check_server_key(&mut self, server_key: &key::PublicKey) -> Result<bool> {
+        let info = known_hosts::inspect_host(&self.host, self.port, server_key)?;
+        if let Some(probe) = &self.probe {
+            *probe
+                .lock()
+                .map_err(|_| anyhow::anyhow!("SSH probe state poisoned"))? = Some(info);
+            // This connection performs key exchange only, without authentication.
+            return Ok(true);
+        }
+        match info.status.as_str() {
+            "trusted" => Ok(true),
+            "changed" => bail!(
+                "SSH_HOST_KEY_CHANGED: {}:{} presented {}, expected {}",
+                self.host,
+                self.port,
+                info.fingerprint,
+                info.old_fingerprint.unwrap_or_default()
+            ),
+            _ if self.trusted_fingerprint.as_deref() == Some(&info.fingerprint) => {
+                known_hosts::remember_approved_host(&self.host, self.port, server_key)
+                    .context("Could not save the approved SSH host key")?;
+                Ok(true)
+            }
+            _ => bail!(
+                "SSH_HOST_KEY_UNKNOWN: {}:{} {}",
+                self.host,
+                self.port,
+                info.fingerprint
+            ),
+        }
     }
+}
+
+pub async fn probe_host_key(host: &str, port: u16) -> Result<HostKeyInfo> {
+    known_hosts::validate_endpoint(host, port)?;
+    let result = Arc::new(std::sync::Mutex::new(None));
+    let mut handler = ClientHandler::new(host, port, None);
+    handler.probe = Some(Arc::clone(&result));
+    let session = tokio::time::timeout(
+        Duration::from_secs(15),
+        client::connect(ssh_config(None), (host, port), handler),
+    )
+    .await
+    .context("SSH host-key probe timed out")??;
+    let _ = session
+        .disconnect(
+            russh::Disconnect::ByApplication,
+            "host-key probe complete",
+            "en",
+        )
+        .await;
+    let info = result
+        .lock()
+        .map_err(|_| anyhow::anyhow!("SSH probe state poisoned"))?
+        .take();
+    info.context("SSH server did not present a host key")
+}
+
+fn ssh_config(keepalive_secs: Option<u64>) -> Arc<client::Config> {
+    Arc::new(client::Config {
+        keepalive_interval: keepalive_secs
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs),
+        keepalive_max: 3,
+        ..Default::default()
+    })
+}
+
+async fn authenticate(
+    session: &mut client::Handle<ClientHandler>,
+    user: &str,
+    auth: &SshAuth,
+) -> Result<()> {
+    let success = match auth {
+        SshAuth::Password(password) => session.authenticate_password(user, password).await?,
+        SshAuth::KeyFile { path, passphrase } => {
+            let pair = russh_keys::load_secret_key(path, passphrase.as_deref())
+                .with_context(|| format!("Loading SSH key {}", path.display()))?;
+            session.authenticate_publickey(user, Arc::new(pair)).await?
+        }
+        SshAuth::Agent => authenticate_agent(session, user).await?,
+        SshAuth::KeyboardInteractive => {
+            bail!("SSH keyboard-interactive authentication requires an interactive challenge UI")
+        }
+    };
+    if !success {
+        bail!("SSH authentication failed for {user}");
+    }
+    Ok(())
+}
+
+async fn authenticate_agent(
+    session: &mut client::Handle<ClientHandler>,
+    user: &str,
+) -> Result<bool> {
+    #[cfg(unix)]
+    let mut agent = russh_keys::agent::client::AgentClient::connect_env()
+        .await
+        .context("Could not connect to SSH_AUTH_SOCK")?;
+    #[cfg(windows)]
+    let mut agent = russh_keys::agent::client::AgentClient::connect_named_pipe(
+        std::env::var_os("SSH_AUTH_SOCK")
+            .unwrap_or_else(|| std::ffi::OsString::from(r"\\.\pipe\openssh-ssh-agent")),
+    )
+    .await
+    .context("Could not connect to the Windows OpenSSH authentication agent")?;
+    #[cfg(any(unix, windows))]
+    {
+        let identities = agent
+            .request_identities()
+            .await
+            .context("Could not list SSH agent keys")?;
+        if identities.is_empty() {
+            bail!("The SSH agent has no identities; add a key with ssh-add");
+        }
+        for public_key in identities {
+            let (next_agent, accepted) = session.authenticate_future(user, public_key, agent).await;
+            agent = next_agent;
+            if accepted.context("SSH agent signing failed")? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    #[cfg(not(any(unix, windows)))]
+    anyhow::bail!("SSH authentication agents are unsupported on this platform")
 }
 
 // ---------------------------------------------------------------------------
@@ -545,49 +636,23 @@ impl SshConnectionPool {
         auth: &SshAuth,
         user: &str,
     ) -> Result<client::Handle<ClientHandler>> {
-        let config = Arc::new(client::Config::default());
-        let handler = ClientHandler;
-        let mut session = client::connect(config, (host, port), handler)
-            .await
-            .with_context(|| format!("SSH connect to {host}:{port}"))?;
-
-        let ok = match auth {
-            SshAuth::Password(ref pw) => session
-                .authenticate_password(user, pw)
-                .await
-                .context("SSH password auth")?,
-            SshAuth::KeyFile {
-                ref path,
-                ref passphrase,
-            } => {
-                let pair = russh_keys::load_secret_key(path, passphrase.as_deref())
-                    .with_context(|| format!("loading SSH key {}", path.display()))?;
-                session
-                    .authenticate_publickey(user, Arc::new(pair))
-                    .await
-                    .context("SSH pubkey auth")?
-            }
-            SshAuth::Agent => {
-                let default_key = dirs::home_dir()
-                    .map(|h| h.join(".ssh/id_ed25519"))
-                    .or_else(|| dirs::home_dir().map(|h| h.join(".ssh/id_rsa")));
-                let Some(kp) = default_key.filter(|p| p.exists()) else {
-                    bail!("SSH agent auth: no default key found in ~/.ssh/");
-                };
-                let pair = russh_keys::load_secret_key(&kp, None)
-                    .with_context(|| format!("loading SSH key {}", kp.display()))?;
-                session
-                    .authenticate_publickey(user, Arc::new(pair))
-                    .await
-                    .context("SSH agent auth")?
-            }
-            SshAuth::KeyboardInteractive => {
-                bail!("keyboard-interactive auth not yet supported in batch mode")
-            }
-        };
-        if !ok {
-            bail!("SSH authentication failed for {user}@{host}:{port}");
-        }
+        known_hosts::validate_endpoint(host, port)?;
+        let mut session = tokio::time::timeout(
+            Duration::from_secs(15),
+            client::connect(
+                ssh_config(Some(30)),
+                (host, port),
+                ClientHandler::new(host, port, None),
+            ),
+        )
+        .await
+        .context("SSH connection timed out")??;
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            authenticate(&mut session, user, auth),
+        )
+        .await
+        .context("SSH authentication timed out")??;
         Ok(session)
     }
 
@@ -608,7 +673,9 @@ pub struct SshTransport {
     #[allow(dead_code)]
     user: String,
     env_vars: Arc<Mutex<HashMap<String, String>>>,
-    keepalive_handle: Option<tokio::task::JoinHandle<()>>,
+    sftp: OnceCell<SftpClient>,
+    forwarding_tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    _proxy: Option<Box<SshTransport>>,
 }
 
 impl SshTransport {
@@ -623,33 +690,85 @@ impl SshTransport {
         auth: SshAuth,
         keepalive_secs: Option<u64>,
     ) -> Result<Self> {
-        let handle = SshConnectionPool::do_connect(host, port, &auth, user).await?;
-        let session = Arc::new(Mutex::new(handle));
-
-        let keepalive_handle = keepalive_secs.map(|interval| {
-            let sess = Arc::clone(&session);
-            tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(Duration::from_secs(interval));
-                loop {
-                    ticker.tick().await;
-                    let s = sess.lock().await;
-                    // Send a global request as keepalive; ignore errors
-                    let _ = s.channel_open_session().await;
-                }
-            })
-        });
-
-        Ok(Self {
-            session,
-            host: host.to_string(),
-            port,
-            user: user.to_string(),
-            env_vars: Arc::new(Mutex::new(HashMap::new())),
-            keepalive_handle,
-        })
+        Self::connect_as_trusted(user, host, port, auth, keepalive_secs, None).await
     }
 
-    /// Connect through a `ProxyJump` host.
+    pub async fn connect_as_trusted(
+        user: &str,
+        host: &str,
+        port: u16,
+        auth: SshAuth,
+        keepalive_secs: Option<u64>,
+        trusted_fingerprint: Option<String>,
+    ) -> Result<Self> {
+        known_hosts::validate_endpoint(host, port)?;
+        let mut handle = tokio::time::timeout(
+            Duration::from_secs(15),
+            client::connect(
+                ssh_config(keepalive_secs),
+                (host, port),
+                ClientHandler::new(host, port, trusted_fingerprint),
+            ),
+        )
+        .await
+        .context("SSH connection timed out")??;
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            authenticate(&mut handle, user, &auth),
+        )
+        .await
+        .context("SSH authentication timed out")??;
+        Ok(Self::from_handle(handle, user, host, port, None))
+    }
+
+    fn from_handle(
+        handle: client::Handle<ClientHandler>,
+        user: &str,
+        host: &str,
+        port: u16,
+        proxy: Option<Self>,
+    ) -> Self {
+        Self {
+            session: Arc::new(Mutex::new(handle)),
+            host: host.into(),
+            port,
+            user: user.into(),
+            env_vars: Arc::new(Mutex::new(HashMap::new())),
+            sftp: OnceCell::new(),
+            forwarding_tasks: std::sync::Mutex::new(Vec::new()),
+            _proxy: proxy.map(Box::new),
+        }
+    }
+
+    async fn connect_next(self, user: &str, host: &str, port: u16, auth: SshAuth) -> Result<Self> {
+        known_hosts::validate_endpoint(host, port)?;
+        let stream = self
+            .session
+            .lock()
+            .await
+            .channel_open_direct_tcpip(host, port.into(), "127.0.0.1", 0)
+            .await?
+            .into_stream();
+        let mut handle = tokio::time::timeout(
+            Duration::from_secs(15),
+            client::connect_stream(
+                ssh_config(Some(30)),
+                stream,
+                ClientHandler::new(host, port, None),
+            ),
+        )
+        .await
+        .context("SSH proxy connection timed out")??;
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            authenticate(&mut handle, user, &auth),
+        )
+        .await
+        .context("SSH authentication timed out")??;
+        Ok(Self::from_handle(handle, user, host, port, Some(self)))
+    }
+
+    /// The target SSH handshake travels through the proxy's direct-tcpip channel.
     pub async fn connect_via_proxy(
         proxy_host: &str,
         proxy_port: u16,
@@ -659,17 +778,38 @@ impl SshTransport {
         target_auth: SshAuth,
         user: &str,
     ) -> Result<Self> {
-        let proxy = Self::connect_as(user, proxy_host, proxy_port, proxy_auth, None).await?;
-        proxy.forward_port(0, target_host, target_port).await?;
-        Self::connect_as(user, target_host, target_port, target_auth, Some(30)).await
+        Self::connect_as(user, proxy_host, proxy_port, proxy_auth, Some(30))
+            .await?
+            .connect_next(user, target_host, target_port, target_auth)
+            .await
+    }
+
+    async fn sftp(&self) -> Result<&SftpClient> {
+        self.sftp
+            .get_or_try_init(|| async {
+                let channel = self.session.lock().await.channel_open_session().await?;
+                channel.request_subsystem(true, "sftp").await?;
+                SftpClient::new(channel.into_stream())
+                    .await
+                    .context("The SSH server has no working SFTP subsystem")
+            })
+            .await
     }
 
     /// Set an environment variable for subsequent exec calls.
-    pub async fn set_env(&self, key: &str, value: &str) {
+    pub async fn set_env(&self, key: &str, value: &str) -> Result<()> {
+        if key.is_empty()
+            || key.bytes().enumerate().any(|(i, c)| {
+                !(c.is_ascii_alphabetic() || c == b'_' || (i > 0 && c.is_ascii_digit()))
+            })
+        {
+            bail!("Invalid remote environment variable name");
+        }
         self.env_vars
             .lock()
             .await
             .insert(key.to_string(), value.to_string());
+        Ok(())
     }
 
     /// Forward local -> remote.
@@ -687,7 +827,7 @@ impl SshTransport {
             .await
             .with_context(|| format!("binding local port {local_port}"))?;
 
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             loop {
                 let Ok((mut local_stream, _)) = listener.accept().await else {
                     break;
@@ -715,6 +855,10 @@ impl SshTransport {
             }
         });
 
+        self.forwarding_tasks
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Port-forward state poisoned"))?
+            .push(task);
         log::info!(
             "forwarding 127.0.0.1:{local_port} -> {log_host}:{remote_port} via {}:{}",
             self.host,
@@ -731,32 +875,8 @@ impl SshTransport {
         local_host: &str,
         local_port: u16,
     ) -> Result<()> {
-        let local_host_owned = local_host.to_string();
-        let local_host_log = local_host_owned.clone();
-        let session = Arc::clone(&self.session);
-
-        tokio::spawn(async move {
-            loop {
-                let channel = {
-                    let sess = session.lock().await;
-                    match sess.channel_open_session().await {
-                        Ok(ch) => ch,
-                        Err(_) => break,
-                    }
-                };
-                let mut remote_stream = channel.into_stream();
-                let Ok(mut local_stream) =
-                    tokio::net::TcpStream::connect(format!("{local_host_owned}:{local_port}"))
-                        .await
-                else {
-                    break;
-                };
-                let _ = tokio::io::copy_bidirectional(&mut local_stream, &mut remote_stream).await;
-            }
-        });
-
-        log::info!("reverse forwarding remote:{remote_port} -> {local_host_log}:{local_port}");
-        Ok(())
+        let _ = (remote_port, local_host, local_port);
+        bail!("Remote-to-local port forwarding is not supported by this SSH transport")
     }
 
     async fn build_env_prefix(&self) -> String {
@@ -766,7 +886,8 @@ impl SshTransport {
         }
         let mut prefix = String::new();
         for (k, v) in env.iter() {
-            let _ = write!(prefix, "export {k}={v:?}; ");
+            let quoted = shell_quote(v);
+            let _ = write!(prefix, "export {k}={quoted}; ");
         }
         prefix
     }
@@ -775,24 +896,32 @@ impl SshTransport {
         let env_prefix = self.build_env_prefix().await;
         let full_cmd = format!("{env_prefix}{command}");
 
-        let session = self.session.lock().await;
-        let channel = session.channel_open_session().await?;
+        let mut channel = self.session.lock().await.channel_open_session().await?;
         channel.exec(true, full_cmd.as_bytes()).await?;
-        drop(session);
-
+        channel.eof().await?;
         let mut stdout = Vec::new();
-        let stderr = Vec::new();
-        let exit_code: i32 = -1;
-
-        let mut stream = channel.into_stream();
-        let mut buf = [0u8; 8192];
-        loop {
-            match stream.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => stdout.extend_from_slice(&buf[..n]),
+        let mut stderr = Vec::new();
+        let mut exit_code = -1;
+        while let Some(message) = channel.wait().await {
+            match message {
+                russh::ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                russh::ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                russh::ChannelMsg::ExitStatus { exit_status } => {
+                    exit_code = i32::try_from(exit_status).unwrap_or(-1)
+                }
+                russh::ChannelMsg::ExitSignal { error_message, .. } => {
+                    exit_code = -1;
+                    stderr.extend_from_slice(error_message.as_bytes());
+                }
+                russh::ChannelMsg::Failure => bail!("The SSH server rejected the command"),
+                russh::ChannelMsg::Close => break,
+                _ => {}
+            }
+            if stdout.len() + stderr.len() > 64 * 1024 * 1024 {
+                let _ = channel.close().await;
+                bail!("Remote command output exceeds 64 MiB");
             }
         }
-
         Ok(ExecOutput {
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
@@ -803,8 +932,10 @@ impl SshTransport {
 
 impl Drop for SshTransport {
     fn drop(&mut self) {
-        if let Some(h) = self.keepalive_handle.take() {
-            h.abort();
+        if let Ok(tasks) = self.forwarding_tasks.get_mut() {
+            for task in tasks.drain(..) {
+                task.abort();
+            }
         }
     }
 }
@@ -815,106 +946,99 @@ impl RemoteTransport for SshTransport {
         self.exec_inner(command).await
     }
 
+    async fn file_request(&self, request: serde_json::Value) -> Result<serde_json::Value> {
+        files::request(self.sftp().await?, request).await
+    }
+
     async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
-        let out = self.exec_inner(&format!("cat {path:?}")).await?;
-        if out.exit_code != 0 {
-            bail!("read_file({path}): {}", out.stderr);
-        }
-        Ok(out.stdout.into_bytes())
+        files::read(self.sftp().await?, path).await
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<()> {
-        let encoded = base64_encode(data);
-        let cmd = format!("echo '{encoded}' | base64 -d > {path:?}");
-        let out = self.exec_inner(&cmd).await?;
-        if out.exit_code != 0 {
-            bail!("write_file({path}): {}", out.stderr);
-        }
-        Ok(())
+        files::write(self.sftp().await?, path, data, true, true).await
     }
 
     async fn read_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
-        let cmd = format!(
-            "find {path:?} -maxdepth 1 -mindepth 1 \
-             -printf '%f\\t%s\\t%y\\t%T@\\t%p\\n' 2>/dev/null || \
-             ls -1 {path:?}"
-        );
-        let out = self.exec_inner(&cmd).await?;
-        let mut entries = Vec::new();
-        for line in out.stdout.lines() {
-            let parts: Vec<&str> = line.splitn(5, '\t').collect();
-            if parts.len() == 5 {
-                let modified = parts[3].parse::<f64>().ok().and_then(|secs| {
-                    SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs_f64(secs))
-                });
-                entries.push(DirEntry {
-                    name: parts[0].to_string(),
-                    path: parts[4].to_string(),
-                    is_dir: parts[2] == "d",
-                    size: parts[1].parse().unwrap_or(0),
-                    modified,
-                });
-            } else {
-                entries.push(DirEntry {
-                    name: line.to_string(),
-                    path: format!("{path}/{line}"),
-                    is_dir: false,
-                    size: 0,
-                    modified: None,
-                });
-            }
-        }
-        Ok(entries)
+        let entries = self.sftp().await?.read_dir(path).await?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| {
+                let name = entry.filename;
+                let metadata = entry.attrs;
+                DirEntry {
+                    path: format!("{}/{name}", path.trim_end_matches('/')),
+                    name,
+                    is_dir: files::file_type(&metadata) == 2,
+                    size: metadata.len(),
+                    modified: metadata.modified().ok(),
+                }
+            })
+            .collect())
     }
 
     async fn stat(&self, path: &str) -> Result<FileStat> {
-        let cmd =
-            format!("stat -c '%s %Y %F %h' {path:?} 2>/dev/null || stat -f '%z %m %T %l' {path:?}");
-        let out = self.exec_inner(&cmd).await?;
-        if out.exit_code != 0 {
-            bail!("stat({path}): {}", out.stderr);
+        let mut metadata = self.sftp().await?.symlink_metadata(path).await?;
+        let is_symlink = files::file_type(&metadata) == 64;
+        if is_symlink {
+            if let Ok(target) = self.sftp().await?.metadata(path).await {
+                metadata = target;
+            }
         }
-        let parts: Vec<&str> = out.stdout.trim().splitn(4, ' ').collect();
-        if parts.len() < 4 {
-            bail!("unexpected stat output for {path}: {}", out.stdout);
-        }
-        let size = parts[0].parse().unwrap_or(0);
-        let modified_secs: u64 = parts[1].parse().unwrap_or(0);
-        let modified =
-            SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(modified_secs));
-        let file_type = parts[2];
         Ok(FileStat {
-            size,
-            modified,
-            is_dir: file_type.contains("directory"),
-            is_symlink: file_type.contains("symbolic") || file_type.contains("link"),
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+            is_dir: files::file_type(&metadata) == 2,
+            is_symlink,
         })
     }
 
     async fn open_pty(&self, cols: u16, rows: u16) -> Result<RemotePty> {
-        let session = self.session.lock().await;
-        let channel = session.channel_open_session().await?;
+        let mut channel = self.session.lock().await.channel_open_session().await?;
         channel
-            .request_pty(true, "xterm-256color", cols.into(), rows.into(), 0, 0, &[])
+            .request_pty(
+                true,
+                "xterm-256color",
+                cols.max(1).into(),
+                rows.max(1).into(),
+                0,
+                0,
+                &[],
+            )
             .await?;
         channel.request_shell(true).await?;
-        drop(session);
-
         let (resize_tx, mut resize_rx) = tokio::sync::mpsc::channel::<(u16, u16)>(8);
-        let stream = channel.into_stream();
-        let (reader, writer) = tokio::io::split(stream);
-
+        let (frontend, driver) = tokio::io::duplex(256 * 1024);
+        let (mut input, mut output) = tokio::io::split(driver);
+        let (reader, writer) = tokio::io::split(frontend);
+        let pty = RemotePty::new(Box::new(writer), Box::new(reader), resize_tx);
+        let exit_code = pty.exit_code_handle();
         tokio::spawn(async move {
-            while let Some((_c, _r)) = resize_rx.recv().await {
-                // channel.window_change(c, r, 0, 0) requires channel handle
+            let mut buffer = [0u8; 8192];
+            let mut can_resize = true;
+            loop {
+                tokio::select! {
+                    incoming = input.read(&mut buffer) => match incoming {
+                        Ok(0) | Err(_) => { let _ = channel.close().await; break; }
+                        Ok(length) => if channel.data(&buffer[..length]).await.is_err() { break; },
+                    },
+                    resize = resize_rx.recv(), if can_resize => match resize {
+                        Some((cols, rows)) => if channel.window_change(cols.max(1).into(), rows.max(1).into(), 0, 0).await.is_err() { break; },
+                        None => can_resize = false,
+                    },
+                    message = channel.wait() => match message {
+                        Some(russh::ChannelMsg::Data { data } | russh::ChannelMsg::ExtendedData { data, .. }) => {
+                            if output.write_all(&data).await.is_err() { let _ = channel.close().await; break; }
+                        }
+                        Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                            exit_code.store(i32::try_from(exit_status).unwrap_or(-1), std::sync::atomic::Ordering::Release);
+                        }
+                        Some(russh::ChannelMsg::Close | russh::ChannelMsg::Failure) | None => break,
+                        _ => {}
+                    }
+                }
             }
         });
-
-        Ok(RemotePty::new(
-            Box::new(writer),
-            Box::new(reader),
-            resize_tx,
-        ))
+        Ok(pty)
     }
 
     async fn upload(&self, local: &Path, remote: &str) -> Result<()> {
@@ -933,6 +1057,11 @@ impl RemoteTransport for SshTransport {
     }
 
     async fn disconnect(&self) -> Result<()> {
+        if let Ok(mut tasks) = self.forwarding_tasks.lock() {
+            for task in tasks.drain(..) {
+                task.abort();
+            }
+        }
         let session = self.session.lock().await;
         session
             .disconnect(russh::Disconnect::ByApplication, "bye", "en")
@@ -945,28 +1074,8 @@ impl RemoteTransport for SshTransport {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = u32::from(chunk[0]);
-        let b1 = u32::from(chunk.get(1).copied().unwrap_or(0));
-        let b2 = u32::from(chunk.get(2).copied().unwrap_or(0));
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        out.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
-        }
-    }
-    out
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 impl SshConfig {
@@ -1004,23 +1113,15 @@ pub async fn connect_multi_hop(
     if hops.is_empty() {
         bail!("multi-hop chain must have at least one hop");
     }
-    if hops.len() == 1 {
-        let (ref host, port, ref auth) = hops[0];
-        return SshTransport::connect_as(final_user, host, port, auth.clone(), Some(30)).await;
+    let (host, port, auth) = &hops[0];
+    let mut transport =
+        SshTransport::connect_as(final_user, host, *port, auth.clone(), Some(30)).await?;
+    for (host, port, auth) in &hops[1..] {
+        transport = transport
+            .connect_next(final_user, host, *port, auth.clone())
+            .await?;
     }
-
-    let (ref proxy_host, proxy_port, ref proxy_auth) = hops[0];
-    let (ref target_host, target_port, ref target_auth) = hops[hops.len() - 1];
-    SshTransport::connect_via_proxy(
-        proxy_host,
-        proxy_port,
-        proxy_auth.clone(),
-        target_host,
-        target_port,
-        target_auth.clone(),
-        final_user,
-    )
-    .await
+    Ok(transport)
 }
 
 #[cfg(test)]
@@ -1090,10 +1191,9 @@ Host *.example.com
 
     #[test]
     fn known_host_unknown() {
-        let fake_key =
-            key::PublicKey::Ed25519(russh_keys::key::ed25519::PublicKey::from_bytes(&[0u8; 32]));
-        let status = check_known_host("nonexistent.test", 22, &fake_key);
-        matches!(status, KnownHostStatus::Unknown { .. });
+        let fake_key = key::KeyPair::generate_ed25519().clone_public_key().unwrap();
+        let status = check_known_host("nonexistent.test", 22, &fake_key).unwrap();
+        assert!(matches!(status, KnownHostStatus::Unknown { .. }));
     }
 
     #[test]
