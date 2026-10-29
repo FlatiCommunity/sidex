@@ -46,7 +46,13 @@ fn validate_url(url: &str) -> Result<reqwest::Url, String> {
 
     let host = parsed.host_str().ok_or("missing host")?;
 
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("credentials in request URLs are not allowed".to_string());
+    }
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
+        return Err("requests to localhost are blocked".to_string());
+    }
+    if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
         if ip.is_loopback() || ip.is_unspecified() {
             return Err("requests to loopback/unspecified addresses are blocked".to_string());
         }
@@ -56,6 +62,17 @@ fn validate_url(url: &str) -> Result<reqwest::Url, String> {
             }
             if v4.octets() == [169, 254, 169, 254] {
                 return Err("requests to metadata endpoints are blocked".to_string());
+            }
+        }
+        if let IpAddr::V6(v6) = ip {
+            if v6.is_unique_local() || v6.is_unicast_link_local() {
+                return Err("requests to private/link-local addresses are blocked".to_string());
+            }
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                if v4.is_private() || v4.is_link_local() || v4.is_loopback() || v4.is_unspecified()
+                {
+                    return Err("requests to private/loopback addresses are blocked".to_string());
+                }
             }
         }
     }
@@ -138,68 +155,173 @@ fn is_proxy_allowed(url: &reqwest::Url, settings: &SettingsStore) -> bool {
 /// Process-wide shared HTTP client. One client = one connection pool
 /// shared across all proxy requests. This eliminates the per-request
 /// TCP + TLS handshake overhead that was causing 8-10 s cold requests.
-static PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static PROXY_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
 
-fn get_client() -> &'static reqwest::Client {
-    PROXY_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(Duration::from_secs(5))
-            .tcp_keepalive(Some(Duration::from_mins(1)))
-            .pool_idle_timeout(Some(Duration::from_secs(90)))
-            .pool_max_idle_per_host(8)
-            .http2_keep_alive_interval(Some(Duration::from_secs(30)))
-            .http2_keep_alive_timeout(Duration::from_secs(10))
-            .http2_keep_alive_while_idle(true)
-            .http2_adaptive_window(true)
-            .gzip(true)
-            .brotli(true)
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-    })
+fn get_client() -> Result<&'static reqwest::Client, String> {
+    PROXY_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .connect_timeout(Duration::from_secs(5))
+                .tcp_keepalive(Some(Duration::from_mins(1)))
+                .pool_idle_timeout(Some(Duration::from_secs(90)))
+                .pool_max_idle_per_host(8)
+                .http2_keep_alive_interval(Some(Duration::from_secs(30)))
+                .http2_keep_alive_timeout(Duration::from_secs(10))
+                .http2_keep_alive_while_idle(true)
+                .http2_adaptive_window(true)
+                .gzip(true)
+                .brotli(true)
+                // Each redirect is checked against the same policy as the initial URL.
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|error| format!("HTTP client initialization failed: {error}"))
+        })
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
-#[allow(clippy::cast_possible_truncation)]
-async fn read_body_limited(response: reqwest::Response) -> Result<Vec<u8>, String> {
+async fn read_body_limited(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
     if let Some(len) = response.content_length() {
-        if len as usize > MAX_RESPONSE_BYTES {
+        if len > MAX_RESPONSE_BYTES as u64 {
             return Err(format!("response too large: {len} bytes"));
         }
     }
-    let bytes = response
-        .bytes()
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| format!("read failed: {e}"))?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(format!("response too large: {} bytes", bytes.len()));
+        .map_err(|e| format!("read failed: {e}"))?
+    {
+        if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
+            return Err("response too large".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
+}
+
+fn checked_redirect(
+    current: &reqwest::Url,
+    location: &str,
+    allowed: impl Fn(&reqwest::Url) -> bool,
+) -> Result<reqwest::Url, String> {
+    let next = current
+        .join(location)
+        .map_err(|e| format!("invalid redirect: {e}"))?;
+    let next = validate_url(next.as_str())?;
+    if !allowed(&next) {
+        return Err(format!(
+            "redirect to '{}' is not allowed",
+            next.origin().ascii_serialization()
+        ));
+    }
+    Ok(next)
+}
+
+fn redirect_request(
+    status: reqwest::StatusCode,
+    current: &reqwest::Url,
+    next: &reqwest::Url,
+    method: &mut reqwest::Method,
+    headers: &mut HashMap<String, String>,
+    body: &mut Option<String>,
+) {
+    if current.origin() != next.origin() {
+        headers.retain(|key, _| {
+            !matches!(
+                key.to_ascii_lowercase().as_str(),
+                "authorization" | "proxy-authorization" | "cookie" | "cookie2" | "host"
+            )
+        });
+    }
+    if (matches!(status.as_u16(), 301 | 302) && *method == reqwest::Method::POST)
+        || (status == reqwest::StatusCode::SEE_OTHER && *method != reqwest::Method::HEAD)
+    {
+        *method = reqwest::Method::GET;
+        *body = None;
+        headers.retain(|key, _| {
+            !matches!(
+                key.to_ascii_lowercase().as_str(),
+                "content-type" | "content-length" | "transfer-encoding"
+            )
+        });
+    }
+}
+
+async fn send_request(
+    url: &str,
+    method: &str,
+    mut headers: HashMap<String, String>,
+    mut body: Option<String>,
+    settings: Option<&SettingsStore>,
+) -> Result<reqwest::Response, String> {
+    let mut current = validate_url(url)?;
+    let allowed =
+        |url: &reqwest::Url| settings.is_none_or(|settings| is_proxy_allowed(url, settings));
+    if !allowed(&current) {
+        return Err(format!(
+            "proxy requests to '{}' are not allowed",
+            current.origin().ascii_serialization()
+        ));
+    }
+    let mut method = reqwest::Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+        .map_err(|e| format!("invalid HTTP method: {e}"))?;
+    let client = get_client()?;
+    for hop in 0..=5 {
+        let mut request = client.request(method.clone(), current.clone());
+        for (key, value) in &headers {
+            if !key.eq_ignore_ascii_case("accept-encoding") && !key.eq_ignore_ascii_case("host") {
+                request = request.header(key.as_str(), value.as_str());
+            }
+        }
+        if let Some(body) = &body {
+            request = request.body(body.clone());
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("request failed: {e}"))?;
+        if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            return Ok(response);
+        }
+        let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
+            return Ok(response);
+        };
+        if hop == 5 {
+            return Err("too many HTTP redirects".to_string());
+        }
+        let next = checked_redirect(
+            &current,
+            location
+                .to_str()
+                .map_err(|e| format!("invalid redirect: {e}"))?,
+            allowed,
+        )?;
+        redirect_request(
+            response.status(),
+            &current,
+            &next,
+            &mut method,
+            &mut headers,
+            &mut body,
+        );
+        current = next;
+    }
+    unreachable!("redirect limit is handled above")
 }
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub async fn fetch_url(url: String) -> Result<Vec<u8>, String> {
-    let parsed = validate_url(&url)?;
-    let client = get_client();
-    let response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|e| format!("fetch failed: {e}"))?;
+    let response = send_request(&url, "GET", HashMap::new(), None, None).await?;
     read_body_limited(response).await
 }
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub async fn fetch_url_text(url: String) -> Result<String, String> {
-    let parsed = validate_url(&url)?;
-    let client = get_client();
-    let response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|e| format!("fetch failed: {e}"))?;
+    let response = send_request(&url, "GET", HashMap::new(), None, None).await?;
     let bytes = read_body_limited(response).await?;
     String::from_utf8(bytes).map_err(|e| format!("invalid UTF-8: {e}"))
 }
@@ -213,36 +335,7 @@ pub async fn proxy_request(
     headers: HashMap<String, String>,
     body: Option<String>,
 ) -> Result<String, String> {
-    let parsed = validate_url(&url)?;
-    if !is_proxy_allowed(&parsed, &state) {
-        return Err(format!(
-            "proxy requests to '{}' are not allowed",
-            parsed.host_str().unwrap_or("unknown")
-        ));
-    }
-
-    let client = get_client();
-
-    let mut req = match method.to_uppercase().as_str() {
-        "POST" => client.post(parsed),
-        "PUT" => client.put(parsed),
-        "DELETE" => client.delete(parsed),
-        "PATCH" => client.patch(parsed),
-        _ => client.get(parsed),
-    };
-
-    for (key, value) in &headers {
-        req = req.header(key.as_str(), value.as_str());
-    }
-
-    if let Some(b) = body {
-        req = req.body(b);
-    }
-
-    let response = req
-        .send()
-        .await
-        .map_err(|e| format!("proxy request failed: {e}"))?;
+    let response = send_request(&url, &method, headers, body, Some(&state)).await?;
 
     let bytes = read_body_limited(response).await?;
     String::from_utf8(bytes).map_err(|e| format!("invalid UTF-8 in proxy response: {e}"))
@@ -264,39 +357,7 @@ pub async fn proxy_request_full(
     headers: HashMap<String, String>,
     body: Option<String>,
 ) -> Result<ProxyResponse, String> {
-    let parsed = validate_url(&url)?;
-    if !is_proxy_allowed(&parsed, &state) {
-        return Err(format!(
-            "proxy requests to '{}' are not allowed",
-            parsed.host_str().unwrap_or("unknown")
-        ));
-    }
-
-    let client = get_client();
-
-    let mut req = match method.to_uppercase().as_str() {
-        "POST" => client.post(parsed),
-        "PUT" => client.put(parsed),
-        "DELETE" => client.delete(parsed),
-        "PATCH" => client.patch(parsed),
-        _ => client.get(parsed),
-    };
-
-    for (key, value) in &headers {
-        if key.eq_ignore_ascii_case("accept-encoding") {
-            continue;
-        }
-        req = req.header(key.as_str(), value.as_str());
-    }
-
-    if let Some(b) = body {
-        req = req.body(b);
-    }
-
-    let response = req
-        .send()
-        .await
-        .map_err(|e| format!("proxy request failed: {e}"))?;
+    let response = send_request(&url, &method, headers, body, Some(&state)).await?;
 
     let status = response.status().as_u16();
     let mut resp_headers: HashMap<String, String> = HashMap::new();
@@ -319,6 +380,85 @@ pub async fn proxy_request_full(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_policy_checks_every_destination_including_private_ipv6() {
+        let current = reqwest::Url::parse("https://open-vsx.org/api/example").unwrap();
+        assert_eq!(
+            checked_redirect(&current, "/asset.vsix", is_host_allowed)
+                .unwrap()
+                .as_str(),
+            "https://open-vsx.org/asset.vsix"
+        );
+        for location in [
+            "https://other.invalid/package",
+            "http://127.0.0.1/admin",
+            "http://localhost/admin",
+            "http://[::1]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[fd00::1]/",
+            "http://[fe80::1]/",
+            "file:///etc/passwd",
+            "https://user:secret@open-vsx.org/",
+        ] {
+            assert!(
+                checked_redirect(&current, location, is_host_allowed).is_err(),
+                "{location}"
+            );
+        }
+        let user = serde_json::json!({"sidex.extensions.galleryUrl": "https://custom.example/vscode/gallery"});
+        assert!(
+            checked_redirect(&current, "https://custom.example/package", |url| {
+                is_configured_gallery_allowed(url, &user)
+            })
+            .is_ok()
+        );
+        assert!(
+            checked_redirect(&current, "https://cdn.custom.example/package", |url| {
+                is_configured_gallery_allowed(url, &user)
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn redirect_methods_and_credentials_follow_http_semantics() {
+        let current = reqwest::Url::parse("https://open-vsx.org/query").unwrap();
+        let next = reqwest::Url::parse("https://openvsx.eclipsecontent.org/asset").unwrap();
+        let mut method = reqwest::Method::POST;
+        let mut headers = HashMap::from([
+            ("Authorization".to_string(), "secret".to_string()),
+            ("Cookie".to_string(), "session".to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Accept".to_string(), "application/json".to_string()),
+        ]);
+        let mut body = Some("{}".to_string());
+        redirect_request(
+            reqwest::StatusCode::TEMPORARY_REDIRECT,
+            &current,
+            &current,
+            &mut method,
+            &mut headers,
+            &mut body,
+        );
+        assert_eq!(method, reqwest::Method::POST);
+        assert_eq!(body.as_deref(), Some("{}"));
+        assert!(headers.contains_key("Authorization"));
+        redirect_request(
+            reqwest::StatusCode::FOUND,
+            &current,
+            &next,
+            &mut method,
+            &mut headers,
+            &mut body,
+        );
+        assert_eq!(method, reqwest::Method::GET);
+        assert!(body.is_none());
+        assert_eq!(
+            headers,
+            HashMap::from([("Accept".to_string(), "application/json".to_string())])
+        );
+    }
 
     #[test]
     fn custom_registry_permissions_match_exact_origins() {
