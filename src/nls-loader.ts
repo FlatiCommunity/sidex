@@ -1,4 +1,5 @@
 import {
+	BUILTIN_LANGUAGES,
 	findLocalization,
 	isEnglish,
 	localeCandidates,
@@ -115,7 +116,9 @@ export async function loadNlsMessages(): Promise<void> {
 		return;
 	}
 
-	const bundledLocale = localeCandidates(requested).find(locale => locale === 'ru');
+	const bundledLocale = localeCandidates(requested).find(locale =>
+		BUILTIN_LANGUAGES.some(builtin => builtin.id === locale && builtin.id !== 'en')
+	);
 	const [index, installed, bundledRaw] = await Promise.all([
 		getNlsIndex(),
 		loadInstalledMessages(requested),
@@ -125,7 +128,7 @@ export async function loadNlsMessages(): Promise<void> {
 	const locale = installed?.locale ?? (bundled ? bundledLocale : undefined);
 	if (!locale) return;
 	let extra: Record<string, string> | undefined;
-	if (installed && ['zh-cn', 'ja', 'ko'].includes(locale)) {
+	if (installed && ['ja', 'ko'].includes(locale)) {
 		const raw = await localResource(`/locales/${locale}.overrides.json`);
 		extra = raw ? parseTranslationBundle(raw) : undefined;
 	}

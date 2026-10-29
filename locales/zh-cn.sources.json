@@ -1,0 +1,15 @@
+{
+  "locale": "zh-cn",
+  "sources": [
+    {
+      "file": "zh-hans-1.110.json",
+      "url": "https://raw.githubusercontent.com/microsoft/vscode-loc/27ca299058e5ff97360d3f2a7167a1821403cc7c/i18n/vscode-language-pack-zh-hans/translations/main.i18n.json",
+      "revision": "27ca299058e5ff97360d3f2a7167a1821403cc7c"
+    },
+    {
+      "file": "zh-hans-supplemental.json",
+      "url": "https://raw.githubusercontent.com/microsoft/vscode-loc/0f157dee0cdcbf58cdf51a221ee94751c7f35e75/i18n/vscode-language-pack-zh-hans/translations/main.i18n.json",
+      "revision": "0f157dee0cdcbf58cdf51a221ee94751c7f35e75"
+    }
+  ]
+}

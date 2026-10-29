@@ -15,7 +15,9 @@ export interface InstalledLanguagePack {
 
 export const BUILTIN_LANGUAGES = [
 	{ id: 'en', label: 'English' },
-	{ id: 'ru', label: 'Русский' }
+	{ id: 'ru', label: 'Русский' },
+	{ id: 'zh-cn', label: '简体中文' },
+	{ id: 'zh-tw', label: '繁體中文' }
 ] as const;
 
 export function normalizeLocale(locale: string): string {

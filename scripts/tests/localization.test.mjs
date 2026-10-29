@@ -272,3 +272,48 @@ test('codebase mentions keep the search query separate from translated suggestio
 	assert.equal(suggestion.detail, '[translated] Search the entire indexed codebase');
 	assert.equal(await resolver.resolve(suggestion), 'find entry point');
 });
+
+test('Simplified and Traditional Chinese aliases load complete local catalogs without installing an extension', async () => {
+	const originalFetch = globalThis.fetch;
+	try {
+		for (const [requested, locale, translated] of [
+			['zh-Hans-CN', 'zh-cn', '你好，{0}'],
+			['zh-Hant-HK', 'zh-tw', '你好，{0}']
+		]) {
+			const saved = new Map([['vscode.nls.locale', requested]]);
+			globalThis.localStorage = {
+				getItem: key => saved.get(key) ?? null,
+				setItem: (key, value) => saved.set(key, value),
+				removeItem: key => saved.delete(key)
+			};
+			const requests = [];
+			globalThis.fetch = async url => {
+				requests.push(url);
+				if (url === '/nls.messages.json')
+					return new Response(JSON.stringify({ modules: ['vs/test'], messages: [[0, 'hello', 'Hello {0}']] }));
+				assert.equal(url, `/locales/${locale}.json`);
+				return new Response(JSON.stringify({ contents: { 'vs/test': { hello: translated } } }));
+			};
+			const source =
+				(await fs.readFile(new URL('../../src/nls-loader.ts', import.meta.url), 'utf8')).replace(
+					"'./localization/languagePacks.js'",
+					JSON.stringify(helpersUrl)
+				) + `\n// fixture ${locale}`;
+			await (await import(moduleUrl(source))).loadNlsMessages();
+			assert.equal(globalThis._VSCODE_NLS_LANGUAGE, locale);
+			assert.deepEqual(globalThis._VSCODE_NLS_MESSAGES, [translated]);
+			assert.equal(globalThis._SIDEX_NLS_COVERAGE.fallback, 0);
+			assert.deepEqual(requests.sort(), [`/locales/${locale}.json`, '/nls.messages.json']);
+		}
+	} finally {
+		globalThis.fetch = originalFetch;
+		for (const key of [
+			'localStorage',
+			'_VSCODE_NLS_MESSAGES',
+			'_VSCODE_NLS_LANGUAGE',
+			'_SIDEX_NLS_COVERAGE',
+			'_SIDEX_NLS_NATIVE_LABELS'
+		])
+			delete globalThis[key];
+	}
+});

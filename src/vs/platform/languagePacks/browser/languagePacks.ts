@@ -3,7 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { RUSSIAN_BUILTIN_EXTENSIONS } from '../../../../localization/builtinTranslations.js';
+import {
+	BUNDLED_TRANSLATED_EXTENSIONS,
+	BUNDLED_TRANSLATION_LOCALES
+} from '../../../../localization/builtinTranslations.js';
 import { URI } from '../../../base/common/uri.js';
 import { ILanguagePackItem, ILanguagePackService } from '../common/languagePacks.js';
 import { IExtensionGalleryService } from '../../extensionManagement/common/extensionManagement.js';
@@ -14,6 +17,7 @@ import {
 	findLocalization,
 	getLocalizations,
 	normalizeLocale,
+	localeCandidates,
 	scanInstalledLanguagePacks,
 	storedValue,
 	translationPath,
@@ -52,9 +56,13 @@ export class WebLanguagePacksService implements ILanguagePackService {
 			const relativePath = path && translationPath(path);
 			if (relativePath) return URI.joinPath(extension.extensionLocation, relativePath);
 		}
-		if (normalizeLocale(language).split('-')[0] === 'ru' && RUSSIAN_BUILTIN_EXTENSIONS.has(id.toLowerCase())) {
+		const bundledLocale = localeCandidates(language).find(locale => BUNDLED_TRANSLATION_LOCALES.has(locale));
+		if (bundledLocale && BUNDLED_TRANSLATED_EXTENSIONS.has(id.toLowerCase())) {
 			return URI.parse(
-				new URL(`/locales/ru/extensions/${id.toLowerCase()}.i18n.json`, globalThis.location.href).toString()
+				new URL(
+					`/locales/${bundledLocale}/extensions/${id.toLowerCase()}.i18n.json`,
+					globalThis.location.href
+				).toString()
 			);
 		}
 		return undefined;

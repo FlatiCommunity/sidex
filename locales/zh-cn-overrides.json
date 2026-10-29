@@ -534,7 +534,8 @@
       "sidex.chat.toolRevertMissingContent": "无法还原: 当前会话中没有原始文件内容",
       "sidex.chat.toolRevertUnavailable": "无法还原: 未找到本地工具桥接服务",
       "sidex.chat.toolRevertFailed": "还原失败: {0}",
-      "sidex.chat.toolRevertNotice": "{0} — 磁盘上的文件尚未还原。请重新读取文件以确认其状态。"
+      "sidex.chat.toolRevertNotice": "{0} — 磁盘上的文件尚未还原。请重新读取文件以确认其状态。",
+      "sidex.chat.toolRevertRemoteUnavailable": "无法在远程工作区中还原文件。"
     },
     "vs/workbench/contrib/sidexChat/browser/context/mentionResolver": {
       "sidex.ui.codebase.646155": "代码库",
@@ -913,7 +914,8 @@
       "sidexSettingsEnabled": "已启用",
       "sidexSettingsDisabled": "已禁用",
       "sidex.rule.template": "---\ndescription: 新规则\nglobs: \n---\n\n# 规则名称\n\n在此描述你的规则。\n",
-      "sidex.skill.template": "# 技能名称\n\n描述此技能的功能及适用场景。\n"
+      "sidex.skill.template": "# 技能名称\n\n描述此技能的功能及适用场景。\n",
+      "sidexSettingsRemoteWorkspaceTools": "此远程工作区中无法使用本地代理工具。请在资源管理器中编辑项目规则和技能。"
     },
     "vs/workbench/contrib/sidexChat/browser/settings/sections/tabSection": {
       "sidex.ui.contextAwareMultiLineCodeSuggestionsAs.275827": "输入时提供结合上下文的多行代码建议",
@@ -1088,6 +1090,25 @@
       "lightModernDescription": "默认浅色主题",
       "highContrastDescription": "默认高对比度主题",
       "highContrastLightDescription": "默认高对比度浅色主题"
+    },
+    "vs/workbench/browser/actions/quickAccessActions": {
+      "quickOpenWithModes": "快速打开"
+    },
+    "vs/workbench/browser/parts/editor/editorStatus": {
+      "inputModeOvertype": "改写"
+    },
+    "vs/workbench/contrib/debug/browser/debugEditorActions": {
+      "mitogglesource": "切换源代码(&&T)"
+    },
+    "vs/workbench/contrib/debug/common/loadedScriptsPicker": {
+      "moveFocusedView.selectView": "按名称搜索已加载的脚本"
+    },
+    "vs/workbench/contrib/extensions/browser/extensionsWorkbenchService": {
+      "disallowed extensions by policy": "某些扩展已被禁用，因为系统管理员不允许使用它们。",
+      "disallowed extensions": "某些扩展已被禁用，因为它们已配置为不允许使用。"
+    },
+    "vs/workbench/contrib/search/browser/replaceService": {
+      "fileReplaceChanges": "{0} ↔ {1} (替换预览)"
     }
   }
 }

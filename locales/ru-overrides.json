@@ -329,7 +329,8 @@
       "sidex.chat.toolRevertMissingContent": "Нельзя откатить изменения: исходное содержимое файла неизвестно в этом сеансе",
       "sidex.chat.toolRevertUnavailable": "Откат недоступен: не найден локальный мост инструментов",
       "sidex.chat.toolRevertFailed": "Не удалось откатить изменения: {0}",
-      "sidex.chat.toolRevertNotice": "{0} — файл на диске НЕ восстановлен. Перечитайте его, чтобы проверить состояние."
+      "sidex.chat.toolRevertNotice": "{0} — файл на диске НЕ восстановлен. Перечитайте его, чтобы проверить состояние.",
+      "sidex.chat.toolRevertRemoteUnavailable": "Восстановление файлов недоступно в удалённой рабочей области."
     },
     "vs/workbench/contrib/sidexChat/browser/settings/sections/configurationSection": {
       "sidexSettingsConfiguration": "Конфигурация",
@@ -553,7 +554,8 @@
       "sidexSettingsEnabled": "Включено",
       "sidexSettingsDisabled": "Отключено",
       "sidex.rule.template": "---\ndescription: Новое правило\nglobs: \n---\n\n# Название правила\n\nОпишите здесь своё правило.\n",
-      "sidex.skill.template": "# Название навыка\n\nОпишите, что делает этот навык и когда его следует использовать.\n"
+      "sidex.skill.template": "# Название навыка\n\nОпишите, что делает этот навык и когда его следует использовать.\n",
+      "sidexSettingsRemoteWorkspaceTools": "Локальные инструменты агента недоступны в этой удалённой рабочей области. Редактируйте правила и навыки проекта в проводнике."
     },
     "vs/workbench/contrib/sidexChat/browser/settings/sections/toolsSection": {
       "sidexSettingsTools": "Инструменты и MCP",

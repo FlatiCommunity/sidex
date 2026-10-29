@@ -1,5 +1,6 @@
-// Official VS Code extension bundles shipped with the Russian language pack.
-export const RUSSIAN_BUILTIN_EXTENSIONS = new Set([
+// Official VS Code extension bundles shipped with the bundled language packs.
+export const BUNDLED_TRANSLATION_LOCALES = new Set(['ru', 'zh-cn', 'zh-tw']);
+export const BUNDLED_TRANSLATED_EXTENSIONS = new Set([
 	'vscode.bat',
 	'vscode.clojure',
 	'vscode.coffeescript',

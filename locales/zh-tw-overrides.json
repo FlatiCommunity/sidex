@@ -534,7 +534,8 @@
       "sidex.chat.toolRevertMissingContent": "無法還原: 此工作階段中沒有原始檔案內容",
       "sidex.chat.toolRevertUnavailable": "無法還原: 找不到本機工具橋接服務",
       "sidex.chat.toolRevertFailed": "還原失敗: {0}",
-      "sidex.chat.toolRevertNotice": "{0} — 磁碟上的檔案並未還原。請重新讀取檔案以確認其狀態。"
+      "sidex.chat.toolRevertNotice": "{0} — 磁碟上的檔案並未還原。請重新讀取檔案以確認其狀態。",
+      "sidex.chat.toolRevertRemoteUnavailable": "無法在遠端工作區還原檔案。"
     },
     "vs/workbench/contrib/sidexChat/browser/context/mentionResolver": {
       "sidex.ui.codebase.646155": "程式碼基底",
@@ -913,7 +914,8 @@
       "sidexSettingsEnabled": "已啟用",
       "sidexSettingsDisabled": "已停用",
       "sidex.rule.template": "---\ndescription: 新增規則\nglobs: \n---\n\n# 規則名稱\n\n請在此處描述您的規則。\n",
-      "sidex.skill.template": "# 技能名稱\n\n請描述此技能的功能及使用時機。\n"
+      "sidex.skill.template": "# 技能名稱\n\n請描述此技能的功能及使用時機。\n",
+      "sidexSettingsRemoteWorkspaceTools": "此遠端工作區無法使用本機代理程式工具。請在檔案總管中編輯專案規則與技能。"
     },
     "vs/workbench/contrib/sidexChat/browser/settings/sections/tabSection": {
       "sidex.ui.contextAwareMultiLineCodeSuggestionsAs.275827": "輸入時根據內容提供多行程式碼建議",
@@ -1088,6 +1090,43 @@
       "lightModernDescription": "預設淺色佈景主題",
       "highContrastDescription": "預設高對比佈景主題",
       "highContrastLightDescription": "預設高對比淺色佈景主題"
+    },
+    "vs/editor/common/viewLayout/viewLineRenderer": {
+      "overflow.chars": "{0} 個字元"
+    },
+    "vs/workbench/browser/actions/layoutActions": {
+      "miToggleZenMode": "禪模式",
+      "zenMode": "禪模式"
+    },
+    "vs/workbench/browser/workbench.contribution": {
+      "zenModeConfigurationTitle": "禪模式"
+    },
+    "vs/workbench/contrib/preferences/browser/settingsLayout": {
+      "zenMode": "禪模式",
+      "proxy": "代理伺服器"
+    },
+    "vs/workbench/browser/actions/quickAccessActions": {
+      "quickOpenWithModes": "快速開啟"
+    },
+    "vs/workbench/browser/parts/editor/editorStatus": {
+      "inputModeOvertype": "取代"
+    },
+    "vs/workbench/contrib/debug/browser/debugEditorActions": {
+      "miDisassemblyView": "反組譯檢視(&&D)",
+      "mitogglesource": "切換來源(&&T)"
+    },
+    "vs/workbench/contrib/debug/common/loadedScriptsPicker": {
+      "moveFocusedView.selectView": "依名稱搜尋已載入的指令碼"
+    },
+    "vs/workbench/contrib/extensions/browser/extensionsWorkbenchService": {
+      "disallowed extensions by policy": "部分延伸模組已停用，因為系統管理員不允許使用。",
+      "disallowed extensions": "部分延伸模組已停用，因為設定不允許使用。"
+    },
+    "vs/workbench/contrib/preferences/browser/settingsSearchMenu": {
+      "extSettingsSearch": "延伸模組識別碼..."
+    },
+    "vs/workbench/contrib/search/browser/replaceService": {
+      "fileReplaceChanges": "{0} ↔ {1} (取代預覽)"
     }
   }
 }
