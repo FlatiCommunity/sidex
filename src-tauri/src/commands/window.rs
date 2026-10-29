@@ -6,7 +6,21 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use super::storage::StorageDb;
 use crate::cli::{OpenTarget, TargetKind};
 
-pub struct StartupTargets(pub Mutex<Vec<OpenTarget>>);
+pub struct StartupTargets(Mutex<(String, Vec<OpenTarget>)>);
+
+impl StartupTargets {
+    pub fn new(targets: Vec<OpenTarget>) -> Self {
+        Self(Mutex::new(("main".to_string(), targets)))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn queue_for(&self, label: &str, targets: Vec<OpenTarget>) -> Result<(), String> {
+        let mut pending = self.0.lock().map_err(|e| e.to_string())?;
+        pending.0 = label.to_string();
+        pending.1.extend(targets);
+        Ok(())
+    }
+}
 
 #[derive(Serialize)]
 pub struct StartupTarget {
@@ -22,11 +36,12 @@ pub fn take_startup_targets(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, StartupTargets>,
 ) -> Result<Vec<StartupTarget>, String> {
-    // Secondary windows have their own URL, and must never replay process args.
-    if window.label() != "main" {
+    // Only the designated window consumes process args or a Finder open event.
+    let mut pending = state.0.lock().map_err(|e| e.to_string())?;
+    if window.label() != pending.0 {
         return Ok(Vec::new());
     }
-    let targets = std::mem::take(&mut *state.0.lock().map_err(|e| e.to_string())?);
+    let targets = std::mem::take(&mut pending.1);
     Ok(targets
         .into_iter()
         .map(|target| StartupTarget {

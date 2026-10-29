@@ -533,7 +533,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(AuthState::new())
-        .manage(commands::window::StartupTargets(std::sync::Mutex::new(launch.targets)))
+        .manage(commands::window::StartupTargets::new(launch.targets))
         .manage(UpdateManagerState::new())
         .manage(Arc::new(commands::extensions::MarketplaceClientState::new()))
         .manage(Arc::new(TerminalStore::new()))
@@ -1142,6 +1142,27 @@ pub fn run() {
         .build(context)
         .expect("error while running tauri application")
         .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                use tauri::Emitter;
+                let paths = urls.iter().filter_map(|url| url.to_file_path().ok()).map(std::path::PathBuf::into_os_string);
+                let cwd = std::env::current_dir().unwrap_or_default();
+                if let Ok(launch) = cli::parse(paths, &cwd) {
+                    let windows = app_handle.webview_windows();
+                    let window = windows.get("main").or_else(|| {
+                        windows.values().find(|window| window.label().starts_with("sidex-") && window.is_focused().unwrap_or(false))
+                    }).or_else(|| windows.values().find(|window| window.label().starts_with("sidex-")));
+                    if let Some(window) = window {
+                        if let Some(state) = app_handle.try_state::<commands::window::StartupTargets>() {
+                            let _ = state.queue_for(window.label(), launch.targets);
+                        }
+                        // Queue first: a workbench that is still starting drains these later.
+                        let _ = app_handle.emit_to(window.label(), "sidex-open-targets", ());
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
             // Kill every child process we spawned when the app exits —
             // PTY shells, build tasks, debug adapters, and the extension
             // host would otherwise outlive the editor as orphans.
