@@ -322,7 +322,9 @@ class TauriTerminalBackend extends Disposable implements ITerminalBackend {
 		_options: ITerminalProcessOptions,
 		_shouldPersist: boolean
 	): Promise<ITerminalChildProcess> {
-		const workspace = getNativeWorkspace();
+		// The terminal picker may select a different host, distro, or local root
+		// than the first folder of a mixed workspace.
+		const workspace = _options.workspaceFolder?.uri ?? getNativeWorkspace();
 		if (workspace?.scheme === 'sidex-ssh') {
 			const explicitCwd =
 				typeof shellLaunchConfig.cwd === 'string' ? shellLaunchConfig.cwd : shellLaunchConfig.cwd?.path;

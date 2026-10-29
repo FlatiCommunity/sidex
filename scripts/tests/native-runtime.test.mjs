@@ -162,6 +162,51 @@ async function loadClassMethods(path, className, names, dependencies) {
 	return new Function(...Object.keys(dependencies), compiled)(...Object.values(dependencies));
 }
 
+test('terminal selection controls the host or distro in mixed and multi-host workspaces', async () => {
+	const previous = globalThis.__SIDEX_WORKSPACE_FOLDERS__;
+	const { getNativeWorkspace, setNativeWorkspaceFolders, wslTerminalLaunch } = await loadTypeScript('src/vs/platform/remote/common/nativeWorkspace.ts');
+	const Backend = await loadClassMethods('src/vs/workbench/contrib/terminal/browser/tauriTerminalBackend.ts', 'TauriTerminalBackend', ['createProcess'], {
+		getNativeWorkspace,
+		wslTerminalLaunch,
+		TauriPty: class {
+			constructor(launch, cwd, cols, rows, env, authority) {
+				Object.assign(this, { launch, cwd, cols, rows, env, authority });
+			}
+		}
+	});
+	const local = { scheme: 'file', authority: '', path: '/local/project' };
+	const firstHost = { scheme: 'sidex-ssh', authority: 'me@first:22', path: '/first/project' };
+	const secondHost = { scheme: 'sidex-ssh', authority: 'me@second:2222', path: '/second/project' };
+	const wsl = { scheme: 'sidex-wsl', authority: 'Debian', path: '/home/me/project' };
+	const environment = { LOCAL_ONLY: 'yes' };
+	const backend = new Backend();
+	const launch = (selected, cwd) => backend.createProcess(
+		{ executable: 'bash' }, cwd, 80, 24, '11', environment,
+		{ workspaceFolder: selected ? { uri: selected } : undefined }, false
+	);
+	try {
+		setNativeWorkspaceFolders([firstHost, local, secondHost, wsl]);
+		const second = await launch(secondHost, '/second/project');
+		assert.equal(second.authority, 'me@second:2222');
+		assert.equal(second.cwd, '/second/project');
+		assert.equal(second.env, undefined, 'local environment must not leak into SSH');
+		const native = await launch(local, '/local/project');
+		assert.equal(native.authority, undefined);
+		assert.equal(native.cwd, '/local/project');
+		assert.equal(native.env, environment);
+		const linux = await launch(wsl, '/home/me/project');
+		assert.equal(linux.authority, undefined);
+		assert.equal(linux.launch.executable, 'wsl.exe');
+		assert.deepEqual(linux.launch.args, ['--distribution', 'Debian', '--cd', '/home/me/project']);
+		setNativeWorkspaceFolders([local, secondHost]);
+		assert.equal((await launch(secondHost, '/second/project')).authority, 'me@second:2222');
+		setNativeWorkspaceFolders([firstHost, secondHost]);
+		assert.equal((await launch(undefined, '/first/project')).authority, 'me@first:22', 'the first root is only a fallback when there is no selection');
+	} finally {
+		globalThis.__SIDEX_WORKSPACE_FOLDERS__ = previous;
+	}
+});
+
 test('automatic indexing never converts virtual roots to local paths, including a pending settings read', async () => {
 	const previous = globalThis.__SIDEX_WORKSPACE_FOLDERS__;
 	const { hasNonLocalWorkspace, setNativeWorkspaceFolders } = await loadTypeScript('src/vs/platform/remote/common/nativeWorkspace.ts');
