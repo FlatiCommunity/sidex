@@ -66,6 +66,7 @@ import { IStringDictionary } from '../../../../base/common/collections.js';
 import { IUserDataProfileService } from '../../userDataProfile/common/userDataProfile.js';
 import { IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
+import { getCurrentExtensionTargetPlatform } from '../../../../platform/extensionManagement/common/nativeExtensionPlatform.js';
 
 type GalleryExtensionInfo = { readonly id: string; preRelease?: boolean; migrateStorageFrom?: string };
 type ExtensionInfo = { readonly id: string; preRelease: boolean };
@@ -704,21 +705,27 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 		metadata: Metadata,
 		profileLocation: URI
 	): Promise<IScannedExtension> {
-		const webExtension = await this.toWebExtensionFromGallery(galleryExtension, metadata);
+		let webExtension: IWebExtension;
+		if ((globalThis as any).__SIDEX_TAURI__ === true) {
+			// Commit to disk before announcing installation. The old event-driven
+			// download marked failed installs as successful and retained registry
+			// URLs for icons, grammars and themes that actually live on disk.
+			const { invoke } = await import('@tauri-apps/api/core');
+			const installed = await invoke<{ path: string }>('install_extension_from_url', {
+				url: galleryExtension.assets.download.uri,
+				expectedId: galleryExtension.identifier.id
+			});
+			webExtension = await this.toWebExtensionFromLocalResource(URI.file(installed.path), galleryExtension.identifier, metadata);
+		} else {
+			webExtension = await this.toWebExtensionFromGallery(galleryExtension, metadata);
+		}
 		return this.addWebExtension(webExtension, profileLocation);
 	}
 
 	async addExtension(location: URI, metadata: Metadata, profileLocation: URI): Promise<IScannedExtension> {
-		const webExtension = await this.toWebExtension(
-			location,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			metadata
-		);
+		const webExtension = (globalThis as any).__SIDEX_TAURI__ === true && location.scheme === 'file'
+			? await this.toWebExtensionFromLocalResource(location, undefined, metadata)
+			: await this.toWebExtension(location, undefined, undefined, undefined, undefined, undefined, undefined, metadata);
 		const extension = await this.toScannedExtension(webExtension, false);
 		await this.addToInstalledExtensions([webExtension], profileLocation);
 		return extension;
@@ -824,7 +831,7 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 		await this.writeInstalledExtensions(profileLocation, installedExtensions => {
 			// Remove the existing extension to avoid duplicates
 			installedExtensions = installedExtensions.filter(installedExtension =>
-				webExtensions.some(extension => !areSameExtensions(installedExtension.identifier, extension.identifier))
+				!webExtensions.some(extension => areSameExtensions(installedExtension.identifier, extension.identifier))
 			);
 			installedExtensions.push(...webExtensions);
 			return installedExtensions;
@@ -833,6 +840,15 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 
 	private async scanInstalledExtensions(profileLocation: URI, scanOptions?: ScanOptions): Promise<IScannedExtension[]> {
 		let installedExtensions = await this.readInstalledExtensions(profileLocation);
+		if ((globalThis as any).__SIDEX_TAURI__ === true) {
+			const { invoke } = await import('@tauri-apps/api/core');
+			const native = await invoke<{ id: string; path: string }[]>('list_installed_extensions');
+			const locations = new Map(native.map(extension => [extension.id.toLowerCase(), extension.path]));
+			installedExtensions = await Promise.all(installedExtensions.map(async extension => {
+				const path = locations.get(extension.identifier.id.toLowerCase());
+				return path ? this.toWebExtensionFromLocalResource(URI.file(path), extension.identifier, extension.metadata) : extension;
+			}));
+		}
 
 		// If current profile is not a default profile, then add the application extensions to the list
 		if (
@@ -871,6 +887,22 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 			}
 		}
 		return [...result.values()];
+	}
+
+	private async toWebExtensionFromLocalResource(location: URI, identifier?: IExtensionIdentifier, metadata?: Metadata): Promise<IWebExtension> {
+		const directory = await this.fileService.resolve(location);
+		const resources = directory.children?.filter(child => !child.isDirectory).map(child => child.resource.toString()) ?? [];
+		const nls = this.getPackageNLSResourceMapFromResources(resources);
+		const findResource = (names: string[]): URI | undefined => {
+			const found = resources.find(resource => names.includes(basename(URI.parse(resource).path).toLowerCase()));
+			return found ? URI.parse(found) : undefined;
+		};
+		return this.toWebExtension(
+			location, identifier, undefined, nls,
+			findResource(['package.nls.json']) ?? null,
+			findResource(['readme.md', 'readme.txt', 'readme']),
+			findResource(['changelog.md', 'changelog.txt', 'changelog']), metadata
+		);
 	}
 
 	private async toWebExtensionFromGallery(
@@ -968,13 +1000,6 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 			);
 		}
 
-		if (isSidexTauri && !this.extensionManifestPropertiesService.canExecuteOnWeb(manifest)) {
-			if (!manifest.browser && !manifest.main) {
-				(manifest as any).browser = '';
-			} else if (!manifest.browser && manifest.main) {
-				(manifest as any).browser = manifest.main;
-			}
-		}
 
 		if (fallbackPackageNLSUri === undefined) {
 			try {
@@ -1079,7 +1104,7 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 			readmeUrl: webExtension.readmeUri,
 			changelogUrl: webExtension.changelogUri,
 			metadata: webExtension.metadata,
-			targetPlatform: (globalThis as any).__SIDEX_TAURI__ === true ? TargetPlatform.UNDEFINED : TargetPlatform.WEB,
+			targetPlatform: await getCurrentExtensionTargetPlatform(),
 			validations,
 			isValid,
 			preRelease: !!webExtension.metadata?.preRelease

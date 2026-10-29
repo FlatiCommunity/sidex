@@ -9,8 +9,7 @@ import * as semver from '../../../base/common/semver/semver.js';
 import { IStringDictionary } from '../../../base/common/collections.js';
 import { CancellationError, getErrorMessage, isCancellationError } from '../../../base/common/errors.js';
 import { IPager } from '../../../base/common/paging.js';
-import { isWeb, platform } from '../../../base/common/platform.js';
-import { arch } from '../../../base/common/process.js';
+import { isWeb } from '../../../base/common/platform.js';
 import { isBoolean, isNumber, isString } from '../../../base/common/types.js';
 import { URI } from '../../../base/common/uri.js';
 import {
@@ -22,7 +21,6 @@ import {
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { IEnvironmentService } from '../../environment/common/environment.js';
 import {
-	getTargetPlatform,
 	IExtensionGalleryService,
 	IExtensionIdentifier,
 	IExtensionInfo,
@@ -87,8 +85,7 @@ import {
 } from './extensionGalleryManifest.js';
 import { TelemetryTrustedValue } from '../../telemetry/common/telemetryUtils.js';
 
-const CURRENT_TARGET_PLATFORM =
-	isWeb && !(globalThis as any).__SIDEX_TAURI__ ? TargetPlatform.WEB : getTargetPlatform(platform, arch);
+import { getCurrentExtensionTargetPlatform } from './nativeExtensionPlatform.js';
 const SEARCH_ACTIVITY_HEADER_NAME = 'X-Market-Search-Activity-Id';
 const ACTIVITY_HEADER_NAME = 'Activityid';
 const SERVER_HEADER_NAME = 'Server';
@@ -918,6 +915,11 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 	private getResourceApi(
 		extensionGalleryManifest: IExtensionGalleryManifest
 	): { uri: string; fallback?: string } | undefined {
+		// The resource API returns one latest platform. Native installations need
+		// all platform versions so compatibility filtering can select the build.
+		if ((globalThis as any).__TAURI_INTERNALS__) {
+			return undefined;
+		}
 		const latestVersionResource = getExtensionGalleryManifestResourceUri(
 			extensionGalleryManifest,
 			ExtensionGalleryResourceType.ExtensionLatestVersionUri
@@ -1006,7 +1008,7 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 		const { extensions } = await this.queryGalleryExtensions(
 			query,
 			{
-				targetPlatform: options.targetPlatform ?? CURRENT_TARGET_PLATFORM,
+				targetPlatform: options.targetPlatform ?? (await getCurrentExtensionTargetPlatform()),
 				includePreRelease,
 				versions,
 				compatible: !!options.compatible,
@@ -1202,7 +1204,7 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 		options: IExtensionQueryOptions,
 		allTargetPlatforms: TargetPlatform[]
 	): Promise<IRawGalleryExtensionVersion | null> {
-		const targetPlatform = options.targetPlatform ?? CURRENT_TARGET_PLATFORM;
+		const targetPlatform = options.targetPlatform ?? (await getCurrentExtensionTargetPlatform());
 		const latestExtensionVersionsForTargetPlatform = filterLatestExtensionVersionsForTargetPlatform(
 			latestVersions,
 			targetPlatform,
@@ -1584,7 +1586,7 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 			const { extensions, total } = await this.queryGalleryExtensions(
 				query,
 				{
-					targetPlatform: CURRENT_TARGET_PLATFORM,
+					targetPlatform: (await getCurrentExtensionTargetPlatform()),
 					compatible: false,
 					includePreRelease: !!options.includePreRelease,
 					productVersion: options.productVersion ?? {
@@ -1950,6 +1952,8 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 		});
 
 		const commonHeaders = await this.commonHeadersPromise;
+		const queryUrl = new URL(extensionsQueryApi);
+		queryUrl.searchParams.set('targetPlatform', await getCurrentExtensionTargetPlatform());
 		const headers = {
 			...commonHeaders,
 			'Content-Type': 'application/json',
@@ -1967,7 +1971,7 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 			context = await this.requestService.request(
 				{
 					type: 'POST',
-					url: extensionsQueryApi,
+					url: queryUrl.toString(),
 					data,
 					headers,
 					callSite: 'extensionGalleryService.queryRawGalleryExtensions'
@@ -2566,7 +2570,7 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 
 		const result: IGalleryExtensionVersion[] = [];
 		const seen = new Map<string, number>();
-		for (const version of sortExtensionVersions(versions, onlyCompatible?.targetPlatform ?? CURRENT_TARGET_PLATFORM)) {
+		for (const version of sortExtensionVersions(versions, onlyCompatible?.targetPlatform ?? (await getCurrentExtensionTargetPlatform()))) {
 			const index = seen.get(version.version);
 			const existing = index !== undefined ? result[index] : undefined;
 			const targetPlatform = getTargetPlatformForExtensionVersion(version);

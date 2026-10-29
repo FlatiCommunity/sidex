@@ -56,6 +56,7 @@ import { compare } from '../../../../base/common/strings.js';
 import { IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { getCurrentExtensionTargetPlatform } from '../../../../platform/extensionManagement/common/nativeExtensionPlatform.js';
 
 export class WebExtensionManagementService
 	extends AbstractExtensionManagementService
@@ -159,7 +160,7 @@ export class WebExtensionManagementService
 	}
 
 	async getTargetPlatform(): Promise<TargetPlatform> {
-		return TargetPlatform.WEB;
+		return getCurrentExtensionTargetPlatform();
 	}
 
 	protected override async isExtensionPlatformCompatible(extension: IGalleryExtension): Promise<boolean> {
@@ -186,7 +187,9 @@ export class WebExtensionManagementService
 
 	async install(location: URI, options: InstallOptions = {}): Promise<ILocalExtension> {
 		this.logService.trace('ExtensionManagementService#install', location.toString());
-		const manifest = await this.webExtensionsScannerService.scanExtensionManifest(location);
+		const manifest = (globalThis as any).__SIDEX_TAURI__ === true && location.scheme === 'file' && /\.vsix$/i.test(location.path)
+			? await this.getManifest(location)
+			: await this.webExtensionsScannerService.scanExtensionManifest(location);
 		if (!manifest || !manifest.name || !manifest.version) {
 			throw new Error(`Cannot find a valid extension from the location ${location.toString()}`);
 		}
@@ -388,14 +391,18 @@ export class WebExtensionManagementService
 		extension: ILocalExtension,
 		options: UninstallExtensionTaskOptions
 	): IUninstallExtensionTask {
-		return new UninstallExtensionTask(extension, options, this.webExtensionsScannerService);
+		return new UninstallExtensionTask(extension, options, this.webExtensionsScannerService, this.userDataProfilesService);
 	}
 
 	zip(_extension: ILocalExtension): Promise<URI> {
 		throw new Error('unsupported');
 	}
-	getManifest(_vsix: URI): Promise<IExtensionManifest> {
-		throw new Error('unsupported');
+	async getManifest(vsix: URI): Promise<IExtensionManifest> {
+		if ((globalThis as any).__SIDEX_TAURI__ !== true || vsix.scheme !== 'file') {
+			throw new Error('VSIX manifest inspection requires a local file.');
+		}
+		const { invoke } = await import('@tauri-apps/api/core');
+		return invoke<IExtensionManifest>('read_vsix_manifest', { vsixPath: vsix.fsPath });
 	}
 	download(): Promise<URI> {
 		throw new Error('unsupported');
@@ -437,7 +444,7 @@ function toLocalExtension(extension: IExtension): ILocalExtension {
 		isPreReleaseVersion: !!metadata.isPreReleaseVersion,
 		hasPreReleaseVersion: !!metadata.hasPreReleaseVersion,
 		preRelease: extension.preRelease,
-		targetPlatform: TargetPlatform.WEB,
+		targetPlatform: extension.targetPlatform,
 		updated: !!metadata.updated,
 		pinned: !!metadata?.pinned,
 		private: !!metadata.private,
@@ -512,9 +519,16 @@ class InstallExtensionTask extends AbstractExtensionTask<ILocalExtension> implem
 		this._profileLocation = metadata.isApplicationScoped
 			? this.userDataProfilesService.defaultProfile.extensionsResource
 			: this.options.profileLocation;
-		const scannedExtension = URI.isUri(this.extension)
-			? await this.webExtensionsScannerService.addExtension(this.extension, metadata, this.profileLocation)
-			: await this.webExtensionsScannerService.addExtensionFromGallery(this.extension, metadata, this.profileLocation);
+		let location = this.extension;
+		if (URI.isUri(location) && location.scheme === 'file' && /\.vsix$/i.test(location.path) && (globalThis as any).__SIDEX_TAURI__ === true) {
+			const { invoke } = await import('@tauri-apps/api/core');
+			const installed = await invoke<{ path: string }>('install_extension', { vsixPath: location.fsPath });
+			location = URI.file(installed.path);
+			metadata.source = 'vsix';
+		}
+		const scannedExtension = URI.isUri(location)
+			? await this.webExtensionsScannerService.addExtension(location, metadata, this.profileLocation)
+			: await this.webExtensionsScannerService.addExtensionFromGallery(location, metadata, this.profileLocation);
 		return toLocalExtension(scannedExtension);
 	}
 }
@@ -523,12 +537,21 @@ class UninstallExtensionTask extends AbstractExtensionTask<void> implements IUni
 	constructor(
 		readonly extension: ILocalExtension,
 		readonly options: UninstallExtensionTaskOptions,
-		private readonly webExtensionsScannerService: IWebExtensionsScannerService
+		private readonly webExtensionsScannerService: IWebExtensionsScannerService,
+		private readonly userDataProfilesService: IUserDataProfilesService
 	) {
 		super();
 	}
 
-	protected doRun(_token: CancellationToken): Promise<void> {
-		return this.webExtensionsScannerService.removeExtension(this.extension, this.options.profileLocation);
+	protected async doRun(_token: CancellationToken): Promise<void> {
+		if ((globalThis as any).__SIDEX_TAURI__ === true) {
+			const otherProfiles = this.userDataProfilesService.profiles.filter(profile => profile.extensionsResource.toString() !== this.options.profileLocation.toString());
+			const elsewhere = await Promise.all(otherProfiles.map(profile => this.webExtensionsScannerService.scanUserExtensions(profile.extensionsResource)));
+			if (!elsewhere.some(extensions => extensions.some(extension => areSameExtensions(extension.identifier, this.extension.identifier)))) {
+				const { invoke } = await import('@tauri-apps/api/core');
+				await invoke('uninstall_extension', { extensionId: this.extension.identifier.id });
+			}
+		}
+		await this.webExtensionsScannerService.removeExtension(this.extension, this.options.profileLocation);
 	}
 }

@@ -25,15 +25,22 @@ export class ExtensionManagementServerService implements IExtensionManagementSer
 	constructor(@IInstantiationService instantiationService: IInstantiationService) {
 		if (isWeb) {
 			const extensionManagementService = instantiationService.createInstance(WebExtensionManagementService);
-			this.webExtensionManagementServer = {
-				id: 'web',
-				extensionManagementService,
-				label: localize('browser', 'Browser')
-			};
+			if ((globalThis as any).__SIDEX_TAURI__ === true) {
+				this.localExtensionManagementServer = {
+					id: 'local', extensionManagementService, label: localize('local', 'Local')
+				};
+			} else {
+				this.webExtensionManagementServer = {
+					id: 'web', extensionManagementService, label: localize('browser', 'Browser')
+				};
+			}
 		}
 	}
 
 	getExtensionManagementServer(extension: IExtension): IExtensionManagementServer {
+		if (this.localExtensionManagementServer) {
+			return this.localExtensionManagementServer;
+		}
 		if (this.webExtensionManagementServer) {
 			return this.webExtensionManagementServer;
 		}
@@ -41,7 +48,7 @@ export class ExtensionManagementServerService implements IExtensionManagementSer
 	}
 
 	getExtensionInstallLocation(_extension: IExtension): ExtensionInstallLocation | null {
-		return ExtensionInstallLocation.Web;
+		return this.localExtensionManagementServer ? ExtensionInstallLocation.Local : ExtensionInstallLocation.Web;
 	}
 }
 

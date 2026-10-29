@@ -81,7 +81,7 @@ export class ExtensionService extends AbstractExtensionService implements IExten
 			logService
 		);
 		super(
-			{ hasLocalProcess: false, allowRemoteExtensionsInLocalWebWorker: true },
+			{ hasLocalProcess: (globalThis as any).__SIDEX_TAURI__ === true, allowRemoteExtensionsInLocalWebWorker: true },
 			extensionsProposedApi,
 			extensionHostFactory,
 			new BrowserExtensionHostKindPicker(logService),
@@ -328,6 +328,13 @@ export class BrowserExtensionHostKindPicker implements IExtensionHostKindPicker 
 	}
 
 	public static pickRunningLocation(extensionKinds: ExtensionKind[], isInstalledLocally: boolean, isInstalledRemotely: boolean, preference: ExtensionRunningPreference): ExtensionHostKind | null {
+		// SideX executes local extensions in its native Node host. Keep their
+		// contributions in the workbench registry without forging a browser
+		// entry point (which breaks native APIs and extension-kind validation).
+		if ((globalThis as any).__SIDEX_TAURI__ === true && isInstalledLocally &&
+			(preference !== ExtensionRunningPreference.Remote || !isInstalledRemotely)) {
+			return ExtensionHostKind.LocalProcess;
+		}
 		const result: ExtensionHostKind[] = [];
 		let canRunRemotely = false;
 		for (const extensionKind of extensionKinds) {
