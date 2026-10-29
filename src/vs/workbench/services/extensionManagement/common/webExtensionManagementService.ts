@@ -546,8 +546,18 @@ class UninstallExtensionTask extends AbstractExtensionTask<void> implements IUni
 	protected async doRun(_token: CancellationToken): Promise<void> {
 		if ((globalThis as any).__SIDEX_TAURI__ === true) {
 			const otherProfiles = this.userDataProfilesService.profiles.filter(profile => profile.extensionsResource.toString() !== this.options.profileLocation.toString());
-			const elsewhere = await Promise.all(otherProfiles.map(profile => this.webExtensionsScannerService.scanUserExtensions(profile.extensionsResource)));
-			if (!elsewhere.some(extensions => extensions.some(extension => areSameExtensions(extension.identifier, this.extension.identifier)))) {
+			const defaultProfileLocation = this.userDataProfilesService.defaultProfile.extensionsResource.toString();
+			const usedElsewhere = await Promise.all(otherProfiles.map(async profile => {
+				const extensions = await this.webExtensionsScannerService.scanUserExtensions(profile.extensionsResource);
+				const isDefaultProfile = profile.extensionsResource.toString() === defaultProfileLocation;
+				return extensions.some(extension =>
+					areSameExtensions(extension.identifier, this.extension.identifier) &&
+					// Application-scoped entries belong to the default profile. Other
+					// profiles inherit them from the very entry being uninstalled.
+					(!extension.metadata?.isApplicationScoped || isDefaultProfile)
+				);
+			}));
+			if (!usedElsewhere.some(Boolean)) {
 				const { invoke } = await import('@tauri-apps/api/core');
 				await invoke('uninstall_extension', { extensionId: this.extension.identifier.id });
 			}
