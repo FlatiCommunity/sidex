@@ -20,6 +20,7 @@ import { IProductService } from '../../platform/product/common/productService.js
 import product from '../../platform/product/common/product.js';
 import { NullRemoteAgentService } from '../services/remote/browser/nullRemoteAgentService.js';
 import { RemoteAuthorityResolverService } from '../../platform/remote/browser/remoteAuthorityResolverService.js';
+import { setNativeWorkspaceFolders } from '../../platform/remote/common/nativeWorkspace.js';
 import {
 	IRemoteAuthorityResolverService,
 	RemoteConnectionType
@@ -516,6 +517,12 @@ export class BrowserMain extends Disposable {
 			).then(service => {
 				// Workspace
 				serviceCollection.set(IWorkspaceContextService, service);
+				// Publish actual folders before contributions start: the workspace
+				// configuration file's URI does not describe the folders' filesystem.
+				const syncNativeFolders = () =>
+					setNativeWorkspaceFolders(service.getWorkspace().folders.map(folder => folder.uri));
+				syncNativeFolders();
+				this._register(service.onDidChangeWorkspaceFolders(syncNativeFolders));
 
 				// Configuration
 				serviceCollection.set(IWorkbenchConfigurationService, service);

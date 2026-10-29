@@ -434,8 +434,9 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 	}
 
 	get workspacePath(): string | null {
+		if (hasNonLocalWorkspace()) return null;
 		const folders = this.contextService.getWorkspace().folders;
-		return folders.length > 0 ? folders[0].uri.fsPath : null;
+		return folders.length > 0 && folders[0].uri.scheme === 'file' ? folders[0].uri.fsPath : null;
 	}
 
 	setSelectedModel(modelId: string): void {
@@ -501,7 +502,7 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 
 	private _gatherWorkspaceContext(): IWorkspaceContext {
 		const activeUri = this.editorService.activeEditor?.resource;
-		const activeFile = activeUri?.fsPath ?? null;
+		const activeFile = activeUri?.scheme === 'file' ? activeUri.fsPath : null;
 		const language = this.editorService.activeTextEditorLanguageId ?? null;
 
 		let selection: string | null = null;
@@ -520,12 +521,17 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 			}
 		}
 
-		const folders = this.contextService.getWorkspace().folders.map(f => f.uri.fsPath);
+		const folders = hasNonLocalWorkspace()
+			? []
+			: this.contextService
+					.getWorkspace()
+					.folders.filter(f => f.uri.scheme === 'file')
+					.map(f => f.uri.fsPath);
 
 		const openFiles: string[] = [];
 		for (const group of this.editorGroupsService.groups) {
 			for (const editor of group.editors) {
-				if (editor.resource) {
+				if (editor.resource?.scheme === 'file') {
 					openFiles.push(editor.resource.fsPath);
 				}
 			}
@@ -742,6 +748,7 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 	}
 
 	revertToMessage(messageIndex: number): void {
+		if (hasNonLocalWorkspace()) return;
 		const msg = this._messages[messageIndex];
 		if (!msg || msg.role !== 'user' || !msg.checkpointLabel) {
 			return;
@@ -781,6 +788,7 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 	}
 
 	private async _createCheckpoint(label: string): Promise<void> {
+		if (hasNonLocalWorkspace()) return;
 		const invoke = SidexChatService._getTauriInvoke();
 		if (!invoke) {
 			return;
@@ -793,6 +801,7 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 	}
 
 	private async _rollbackToCheckpoint(label: string): Promise<void> {
+		if (hasNonLocalWorkspace()) return;
 		const invoke = SidexChatService._getTauriInvoke();
 		if (!invoke) {
 			return;
@@ -2223,6 +2232,7 @@ ${prompt}`,
 	}
 
 	private _triggerAutoIndex(): void {
+		if (hasNonLocalWorkspace()) return;
 		const invoke = SidexChatService._getTauriInvoke();
 		const wsPath = this.workspacePath;
 		if (!invoke || !wsPath || wsPath === '.') {
@@ -2234,6 +2244,7 @@ ${prompt}`,
 		// upload additionally requires sign-in and the setting not being off.
 		invoke('settings_get', { section: 'sidex.indexing.autoIndex' })
 			.then(raw => {
+				if (this.workspacePath !== wsPath) return;
 				const autoIndexOff = raw === false || raw === 'false';
 
 				window.dispatchEvent(
@@ -2260,6 +2271,7 @@ ${prompt}`,
 					});
 			})
 			.catch(() => {
+				if (this.workspacePath !== wsPath) return;
 				// Setting store unavailable — still build the local index.
 				invoke('index_build', { root: wsPath }).catch(() => {
 					/* logged in Rust */
@@ -2287,6 +2299,7 @@ ${prompt}`,
 	}
 
 	private _runReindex(): void {
+		if (hasNonLocalWorkspace()) return;
 		const invoke = SidexChatService._getTauriInvoke();
 		const wsPath = this.workspacePath;
 		if (!invoke || !wsPath || wsPath === '.') {

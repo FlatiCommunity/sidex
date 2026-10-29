@@ -5,6 +5,8 @@
 
 import type { SettingsSection } from '../sidexSettingsPanel.js';
 import { localize } from '../../../../../../nls.js';
+import { URI } from '../../../../../../base/common/uri.js';
+import { getNativeWorkspace, hasNonLocalWorkspace } from '../../../../../../platform/remote/common/nativeWorkspace.js';
 
 type TauriInvoke = ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null;
 
@@ -37,7 +39,7 @@ export class RulesSection implements SettingsSection {
 	private _rules: RuleItem[] = [];
 	private _skills: SkillItem[] = [];
 	private _hooks: HookItem[] = [];
-	private _workspacePath: string = '.';
+	private _workspacePath: string | null = null;
 	private _dynamicCardsWrapper: HTMLElement | null = null;
 
 	constructor(invoke: TauriInvoke) {
@@ -47,16 +49,8 @@ export class RulesSection implements SettingsSection {
 	async render(container: HTMLElement): Promise<void> {
 		this._container = container;
 
-		if (this._invoke) {
-			try {
-				const env = (await this._invoke('get_env', { name: 'SIDEX_WORKSPACE' })) as string | null;
-				if (env) {
-					this._workspacePath = env;
-				}
-			} catch {
-				/* use default */
-			}
-		}
+		const workspace = getNativeWorkspace();
+		this._workspacePath = !hasNonLocalWorkspace() && workspace?.scheme === 'file' ? URI.from(workspace).fsPath : null;
 
 		container.innerHTML = '';
 
@@ -72,6 +66,15 @@ export class RulesSection implements SettingsSection {
 			'Provide domain-specific knowledge and workflows for the agent'
 		);
 		container.appendChild(desc);
+		if (hasNonLocalWorkspace()) {
+			const notice = document.createElement('div');
+			notice.className = 'sidex-settings-row-description sidex-settings-section-desc';
+			notice.textContent = localize(
+				'sidexSettingsRemoteWorkspaceTools',
+				'Local agent tools are unavailable in this remote workspace. Edit project rules and skills in Explorer.'
+			);
+			container.appendChild(notice);
+		}
 
 		// 1. Render Scope & Integration Card (Static)
 		this._renderScopeCard(container);
@@ -107,7 +110,7 @@ export class RulesSection implements SettingsSection {
 			items: filteredRules,
 			emptyText: localize('sidexSettingsNoRulesYet', 'No Rules Yet'),
 			newButtonText: localize('sidexSettingsNewRule', 'New Rule'),
-			newAction: () => this._createNewRule()
+			newAction: this._activeTab === 'user' || this._workspacePath ? () => this._createNewRule() : undefined
 		});
 
 		// Render Skills Card
@@ -121,7 +124,7 @@ export class RulesSection implements SettingsSection {
 			items: filteredSkills,
 			emptyText: localize('sidexSettingsNoSkillsYet', 'No Skills Yet'),
 			newButtonText: localize('sidexSettingsNewSkill', 'New Skill'),
-			newAction: () => this._createNewSkill()
+			newAction: this._workspacePath ? () => this._createNewSkill() : undefined
 		});
 
 		// Render Hooks Card
@@ -138,7 +141,9 @@ export class RulesSection implements SettingsSection {
 
 		// Load rules from .sidex/rules/ directory
 		try {
-			const rulesDir = (await this._invoke('read_dir', { path: this._workspacePath + '/.sidex/rules' })) as {
+			const rulesDir = (
+				this._workspacePath ? await this._invoke('read_dir', { path: this._workspacePath + '/.sidex/rules' }) : null
+			) as {
 				entries: { name: string; is_dir: boolean }[];
 			} | null;
 			if (rulesDir && rulesDir.entries) {
@@ -177,7 +182,9 @@ export class RulesSection implements SettingsSection {
 
 		// Load skills from .sidex/skills/ directory
 		try {
-			const skillsDir = (await this._invoke('read_dir', { path: this._workspacePath + '/.sidex/skills' })) as {
+			const skillsDir = (
+				this._workspacePath ? await this._invoke('read_dir', { path: this._workspacePath + '/.sidex/skills' }) : null
+			) as {
 				entries: { name: string; is_dir: boolean }[];
 			} | null;
 			if (skillsDir && skillsDir.entries) {
@@ -360,6 +367,7 @@ export class RulesSection implements SettingsSection {
 		}
 		const filename = `new-rule-${Date.now()}.md`;
 		const scope = this._activeTab === 'user' ? 'user' : 'project';
+		if (scope === 'project' && (!this._workspacePath || hasNonLocalWorkspace())) return;
 		const parentDir = scope === 'project' ? `${this._workspacePath}/.sidex/rules` : `~/.sidex/rules`;
 		const path = `${parentDir}/${filename}`;
 
@@ -370,7 +378,7 @@ export class RulesSection implements SettingsSection {
 
 		this._invoke('mkdir', { path: parentDir, recursive: true })
 			.then(() => {
-				if (this._invoke) {
+				if (this._invoke && (scope === 'user' || !hasNonLocalWorkspace())) {
 					this._invoke('write_file', { path, contents: template })
 						.then(() => {
 							window.dispatchEvent(new CustomEvent('sidex-open-file', { detail: { path } }));
@@ -383,7 +391,7 @@ export class RulesSection implements SettingsSection {
 	}
 
 	private _createNewSkill(): void {
-		if (!this._invoke) {
+		if (!this._invoke || !this._workspacePath || hasNonLocalWorkspace()) {
 			return;
 		}
 		const filename = `new-skill-${Date.now()}.md`;
@@ -397,7 +405,7 @@ export class RulesSection implements SettingsSection {
 
 		this._invoke('mkdir', { path: parentDir, recursive: true })
 			.then(() => {
-				if (this._invoke) {
+				if (this._invoke && !hasNonLocalWorkspace()) {
 					this._invoke('write_file', { path, contents: template })
 						.then(() => {
 							window.dispatchEvent(new CustomEvent('sidex-open-file', { detail: { path } }));

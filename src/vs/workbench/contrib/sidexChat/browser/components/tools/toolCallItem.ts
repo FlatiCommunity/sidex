@@ -5,6 +5,7 @@ import { DiffHunk } from '../diff/diffAlgorithm.js';
 import { ILanguageService } from '../../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../../editor/common/services/model.js';
 import { localize } from '../../../../../../nls.js';
+import { hasNonLocalWorkspace } from '../../../../../../platform/remote/common/nativeWorkspace.js';
 
 const EDIT_TOOLS = new Set([
 	'edit_file',
@@ -26,7 +27,12 @@ const TOOL_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => strin
 	delete_file: a => localize('sidex.chat.toolDeleted', 'Deleted {0}', fileName(a['path'])),
 	shell: a => localize('sidex.chat.toolRan', 'Ran {0}', `\`${shortCmd(a['command'])}\``),
 	grep: a => localize('sidex.chat.toolSearchedFor', 'Searched for "{0}"', stringArg(a['pattern'])),
-	glob: a => localize('sidex.chat.toolFoundMatching', 'Found files matching "{0}"', stringArg(a['pattern']) || stringArg(a['glob'])),
+	glob: a =>
+		localize(
+			'sidex.chat.toolFoundMatching',
+			'Found files matching "{0}"',
+			stringArg(a['pattern']) || stringArg(a['glob'])
+		),
 	search_files: a => localize('sidex.chat.toolSearchedFilesFor', 'Searched files for "{0}"', stringArg(a['pattern'])),
 	git_status: () => localize('sidex.chat.toolGitStatus', 'Checked git status'),
 	git_log: () => localize('sidex.chat.toolGitLog', 'Viewed git log'),
@@ -241,6 +247,12 @@ export class ToolCallItem extends Component {
 	}
 
 	private _invokeTool(name: string, args: Record<string, unknown>, filePath: string): void {
+		if (hasNonLocalWorkspace()) {
+			this._showRevertError(
+				localize('sidex.chat.toolRevertRemoteUnavailable', 'Reverting files is unavailable in a remote workspace.')
+			);
+			return;
+		}
 		const g = globalThis as unknown as {
 			__TAURI_INVOKE__?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 			__TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };

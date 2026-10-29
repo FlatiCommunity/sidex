@@ -107,8 +107,10 @@ test('WSL terminals keep distro and Linux cwd as literal arguments', async () =>
 
 test('virtual workspace identity prevents local agent tools from using remote paths', async () => {
 	const previous = globalThis.__SIDEX_WORKSPACE__;
+	const previousFolders = globalThis.__SIDEX_WORKSPACE_FOLDERS__;
 	const { hasNonLocalWorkspace } = await loadTypeScript('src/vs/platform/remote/common/nativeWorkspace.ts');
 	try {
+		delete globalThis.__SIDEX_WORKSPACE_FOLDERS__;
 		delete globalThis.__SIDEX_WORKSPACE__;
 		assert.equal(hasNonLocalWorkspace(), false);
 		globalThis.__SIDEX_WORKSPACE__ = { scheme: 'file', authority: '', path: '/local' };
@@ -119,5 +121,117 @@ test('virtual workspace identity prevents local agent tools from using remote pa
 		assert.equal(hasNonLocalWorkspace(), true);
 	} finally {
 		globalThis.__SIDEX_WORKSPACE__ = previous;
+		globalThis.__SIDEX_WORKSPACE_FOLDERS__ = previousFolders;
+	}
+});
+
+test('actual workspace folders override the local workspace file and update after folder changes', async () => {
+	const previous = globalThis.__SIDEX_WORKSPACE__;
+	const previousFolders = globalThis.__SIDEX_WORKSPACE_FOLDERS__;
+	const { getNativeWorkspace, hasNonLocalWorkspace, setNativeWorkspaceFolders } = await loadTypeScript('src/vs/platform/remote/common/nativeWorkspace.ts');
+	const local = { scheme: 'file', authority: '', path: '/same/path' };
+	const remote = { scheme: 'sidex-ssh', authority: 'me@server:22', path: '/same/path' };
+	try {
+		globalThis.__SIDEX_WORKSPACE__ = { ...local, path: '/config/project.code-workspace' };
+		setNativeWorkspaceFolders([remote]);
+		assert.equal(hasNonLocalWorkspace(), true);
+		assert.deepEqual(getNativeWorkspace(), remote);
+		setNativeWorkspaceFolders([local, remote]);
+		assert.equal(hasNonLocalWorkspace(), true, 'a remote secondary root must disable local workspace tools');
+		setNativeWorkspaceFolders([local]);
+		assert.equal(hasNonLocalWorkspace(), false);
+		setNativeWorkspaceFolders([]);
+		assert.equal(hasNonLocalWorkspace(), false);
+		assert.equal(getNativeWorkspace(), undefined, 'removed folders must not fall back to a stale launch URI');
+	} finally {
+		globalThis.__SIDEX_WORKSPACE__ = previous;
+		globalThis.__SIDEX_WORKSPACE_FOLDERS__ = previousFolders;
+	}
+});
+
+async function loadClassMethods(path, className, names, dependencies) {
+	const text = await readFile(new URL(`../../${path}`, import.meta.url), 'utf8');
+	const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+	const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === className);
+	assert.ok(declaration, `${className} exists`);
+	const methods = declaration.members.filter(member => names.includes(member.name?.getText(source)));
+	assert.equal(methods.length, names.length, 'exercise the real implementation methods');
+	const compiled = ts.transpileModule(`class ${className} { ${methods.map(method => method.getText(source)).join('\n')} }\nreturn ${className};`, {
+		compilerOptions: { target: ts.ScriptTarget.ES2022 }
+	}).outputText;
+	return new Function(...Object.keys(dependencies), compiled)(...Object.values(dependencies));
+}
+
+test('automatic indexing never converts virtual roots to local paths, including a pending settings read', async () => {
+	const previous = globalThis.__SIDEX_WORKSPACE_FOLDERS__;
+	const { hasNonLocalWorkspace, setNativeWorkspaceFolders } = await loadTypeScript('src/vs/platform/remote/common/nativeWorkspace.ts');
+	const Service = await loadClassMethods('src/vs/workbench/contrib/sidexChat/browser/sidexChatService.ts', 'SidexChatService', ['workspacePath', '_triggerAutoIndex', '_runReindex'], {
+		hasNonLocalWorkspace,
+		window: { dispatchEvent() {} },
+		CustomEvent
+	});
+	const calls = [];
+	let finishSettings;
+	Service._getTauriInvoke = () => (command, args) => {
+		calls.push([command, args]);
+		return command === 'settings_get' ? new Promise(resolve => { finishSettings = resolve; }) : Promise.resolve();
+	};
+	const service = new Service();
+	const local = { scheme: 'file', authority: '', path: '/same/path', fsPath: '/same/path' };
+	const remote = { scheme: 'sidex-ssh', authority: 'server', path: '/same/path', fsPath: '/same/path' };
+	let folders = [{ uri: remote }];
+	service.contextService = { getWorkspace: () => ({ folders }) };
+	service._startReindexInterval = () => {};
+	try {
+		setNativeWorkspaceFolders([remote]);
+		assert.equal(service.workspacePath, null);
+		service._triggerAutoIndex();
+		service._runReindex();
+		assert.deepEqual(calls, []);
+		folders = [{ uri: local }];
+		setNativeWorkspaceFolders([local]);
+		service._triggerAutoIndex();
+		assert.equal(calls[0][0], 'settings_get');
+		folders.push({ uri: remote });
+		setNativeWorkspaceFolders([local, remote]);
+		finishSettings(false);
+		await new Promise(resolve => setImmediate(resolve));
+		assert.equal(calls.length, 1, 'a changed workspace must cancel the pending local indexing');
+		folders = [{ uri: local }];
+		setNativeWorkspaceFolders([local]);
+		service._runReindex();
+		assert.deepEqual(calls.at(-1), ['index_build', { root: '/same/path' }]);
+	} finally {
+		globalThis.__SIDEX_WORKSPACE_FOLDERS__ = previous;
+	}
+});
+
+test('project rules and chat diff reverts cannot invoke local writes from a virtual workspace', async () => {
+	const previous = globalThis.__SIDEX_WORKSPACE_FOLDERS__;
+	const previousInvoke = globalThis.__TAURI_INVOKE__;
+	const { hasNonLocalWorkspace, setNativeWorkspaceFolders } = await loadTypeScript('src/vs/platform/remote/common/nativeWorkspace.ts');
+	const dependencies = { hasNonLocalWorkspace, localize: (_key, message) => message };
+	const RuleSection = await loadClassMethods('src/vs/workbench/contrib/sidexChat/browser/settings/sections/rulesSection.ts', 'RulesSection', ['_createNewRule', '_createNewSkill'], dependencies);
+	const ToolItem = await loadClassMethods('src/vs/workbench/contrib/sidexChat/browser/components/tools/toolCallItem.ts', 'ToolCallItem', ['_invokeTool'], dependencies);
+	const calls = [];
+	const invoke = (command, args) => { calls.push([command, args]); return Promise.resolve(); };
+	try {
+		setNativeWorkspaceFolders([{ scheme: 'sidex-wsl', authority: 'Ubuntu', path: '/same/path' }]);
+		globalThis.__TAURI_INVOKE__ = invoke;
+		const rules = new RuleSection();
+		rules._workspacePath = '/same/path';
+		rules._activeTab = 'project';
+		rules._invoke = invoke;
+		rules._createNewRule();
+		rules._createNewSkill();
+		const item = new ToolItem();
+		let error;
+		item._showRevertError = message => { error = message; };
+		item._invokeTool('edit_file', { path: '/same/path/file.ts' }, '/same/path/file.ts');
+		assert.match(error, /remote workspace/);
+		assert.deepEqual(calls, []);
+	} finally {
+		globalThis.__SIDEX_WORKSPACE_FOLDERS__ = previous;
+		globalThis.__TAURI_INVOKE__ = previousInvoke;
 	}
 });

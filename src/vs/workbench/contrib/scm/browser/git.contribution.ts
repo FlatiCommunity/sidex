@@ -75,6 +75,7 @@ import { historyItemRefColor, historyItemRemoteRefColor } from './scmHistory.js'
 import { GIT_ORIGINAL_SCHEME, gitOriginalUri, gitOriginalRequest } from './gitOriginalUri.js';
 import { getNLSLanguage, localize } from '../../../../nls.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
+import { getNativeWorkspace, hasNonLocalWorkspace } from '../../../../platform/remote/common/nativeWorkspace.js';
 
 // ─── Tauri invoke() bridge ──────────────────────────────────────────────────
 
@@ -105,12 +106,20 @@ interface TauriGitLogEntry {
 let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | undefined;
 
 async function getTauriInvoke(): Promise<typeof _invoke> {
+	if (hasNonLocalWorkspace()) {
+		return undefined;
+	}
 	if (_invoke) {
 		return _invoke;
 	}
 	try {
 		const mod = await import('@tauri-apps/api/core');
-		_invoke = mod.invoke;
+		_invoke = (command, args) => {
+			if (hasNonLocalWorkspace()) {
+				return Promise.reject(new Error('Local Git commands are unavailable in a remote workspace.'));
+			}
+			return mod.invoke(command, args);
+		};
 		return _invoke;
 	} catch {
 		return undefined;
@@ -1135,9 +1144,7 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 	private async _init(): Promise<void> {
 		const folders = this.workspaceContextService.getWorkspace().folders;
 
-		(window as any).__sidex_workspaceFolders = folders.map(f => f.uri.fsPath);
-
-		if (folders.length === 0) {
+		if (folders.length === 0 || hasNonLocalWorkspace()) {
 			return;
 		}
 
@@ -1480,6 +1487,7 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 // Register git.init command globally so the "Initialize Repository" button works
 CommandsRegistry.registerCommand('git.init', async () => {
 	try {
+		if (hasNonLocalWorkspace()) return;
 		const invoke = await getTauriInvoke();
 		if (!invoke) {
 			return;
@@ -1487,12 +1495,8 @@ CommandsRegistry.registerCommand('git.init', async () => {
 
 		const { open } = await import('@tauri-apps/plugin-dialog');
 		// Use the current workspace folder if available, otherwise ask
-		const folders = (window as any).__sidex_workspaceFolders;
-		let targetPath: string | undefined;
-
-		if (folders && folders.length > 0) {
-			targetPath = folders[0];
-		} else {
+		let targetPath = getWorkspacePath();
+		if (!targetPath) {
 			const selected = await open({
 				directory: true,
 				title: localize('sidex.ui.initializeGitRepository.232fb6', 'Initialize Git Repository')
@@ -1502,7 +1506,7 @@ CommandsRegistry.registerCommand('git.init', async () => {
 			}
 		}
 
-		if (!targetPath) {
+		if (!targetPath || hasNonLocalWorkspace()) {
 			return;
 		}
 
@@ -1550,8 +1554,8 @@ registerWorkbenchContribution2(TauriGitContribution.ID, TauriGitContribution, Wo
 // ─── Repository-level commands ──────────────────────────────────────────────
 
 function getWorkspacePath(): string | undefined {
-	const folders = (window as any).__sidex_workspaceFolders;
-	return folders && folders.length > 0 ? folders[0] : undefined;
+	const folder = getNativeWorkspace();
+	return !hasNonLocalWorkspace() && folder?.scheme === Schemas.file ? URI.from(folder).fsPath : undefined;
 }
 
 CommandsRegistry.registerCommand('git.pull', async () => {
