@@ -1,0 +1,46 @@
+{
+  "contents": {
+    "vs/workbench/contrib/files/browser/explorerViewlet": {
+      "explorerViewlet.cloneRepository": "你可以在本地克隆一个仓库。\n{0}"
+    },
+    "vs/workbench/contrib/remote/browser/remote.contribution": {
+      "remoteExplorerViewIcon": "远程资源管理器视图图标。",
+      "remoteExplorer": "远程资源管理器",
+      "sidex.remote.refresh": "刷新远程资源管理器",
+      "sidex.remote.openExplorer": "远程资源管理器",
+      "remote.pick.connectToTunnel": "连接到隧道…",
+      "remote.pick.tunnelsProvider": "远程隧道",
+      "remote.pick.connectToHost": "连接到主机…",
+      "remote.pick.sshProvider": "远程 SSH",
+      "remote.pick.wsl": "连接到 WSL…",
+      "remote.pick.wslProvider": "远程 WSL",
+      "remote.pick.container": "在容器中打开文件夹…",
+      "remote.pick.containerProvider": "开发容器",
+      "remote.pick.codespace": "连接到 Codespace…",
+      "remote.pick.codespaceProvider": "GitHub Codespaces",
+      "remote.codespace.tokenPrompt": "具有 codespace 范围的 GitHub 个人访问令牌",
+      "remote.codespace.none": "未找到此帐户的 Codespace。",
+      "remote.codespace.pick": "选择一个 Codespace",
+      "remote.codespace.connected": "已连接到 Codespace: {0}",
+      "remote.codespace.failed": "Codespace 连接失败: {0}",
+      "remote.pick.placeholder": "选择一个选项来打开远程窗口",
+      "remote.ssh.empty": "~/.ssh/config 中没有 SSH 目标 — 在下方添加"
+    },
+    "vs/workbench/contrib/remote/browser/remoteExplorer": {
+      "remote.connect": "连接",
+      "remoteExplorer": "远程资源管理器",
+      "remote.signInMicrosoft": "使用 Microsoft 登录",
+      "remote.signIn": "登录",
+      "remote.signInGitHub": "使用 GitHub 登录",
+      "remote.tunnels": "隧道",
+      "remote.ssh.noHosts": "未在 ~/.ssh/config 中找到 SSH 目标",
+      "remote.ssh": "SSH",
+      "remote.codespaces.signIn": "使用 GitHub 登录以查看你的 Codespace",
+      "remote.codespaces.empty": "未找到 Codespace",
+      "remote.codespaces": "GitHub Codespaces",
+      "remote.wsl": "WSL 目标",
+      "remote.containers.noContainers": "未找到运行中的容器",
+      "remote.containers": "开发容器"
+    }
+  }
+}

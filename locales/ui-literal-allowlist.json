@@ -1,0 +1,97 @@
+[
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/inline/inlineEditController.ts",
+    "message": "sidex-inline-edit-selection",
+    "reason": "Internal Monaco decoration description, not UI text."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/inline/inlineEditController.ts",
+    "message": "sidex-inline-diff-removed",
+    "reason": "Internal Monaco decoration description, not UI text."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/inline/inlineEditController.ts",
+    "message": "sidex-inline-diff-added",
+    "reason": "Internal Monaco decoration description, not UI text."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/inline/inlineEditInputWidget.ts",
+    "message": "Enter",
+    "reason": "Keyboard key name."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/settings/sections/agentsSection.ts",
+    "message": "Git",
+    "reason": "Product name."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/settings/sections/agentsSection.ts",
+    "message": "cursor/",
+    "reason": "Executable command, identifier or path example."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/settings/sections/hooksSection.ts",
+    "message": "npm run lint --fix",
+    "reason": "Executable command, identifier or path example."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/settings/sections/pluginsSection.ts",
+    "message": "my-server",
+    "reason": "Executable command, identifier or path example."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/settings/sections/pluginsSection.ts",
+    "message": "npx -y @modelcontextprotocol/server-...",
+    "reason": "Executable command, identifier or path example."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/settings/sections/pluginsSection.ts",
+    "message": "--port 3000",
+    "reason": "Executable command, identifier or path example."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/settings/sections/tabSection.ts",
+    "message": "Tab",
+    "reason": "Keyboard key name."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/settings/sections/tabSection.ts",
+    "message": "Sidex Tab",
+    "reason": "Product name."
+  },
+  {
+    "file": "src/vs/workbench/contrib/sidexChat/browser/sidexChatService.ts",
+    "message": "Complete this task directly using tools. Do not use spawn_agents.\n\nTask: {0}\n{1}",
+    "reason": "Internal agent instruction, not displayed as application UI."
+  },
+  {
+    "file": "src/vs/workbench/contrib/scm/browser/git.contribution.ts",
+    "message": "$(git-branch) {0}{1}",
+    "reason": "Codicon markup and interpolated data, no display-language words."
+  },
+  {
+    "file": "src/vs/workbench/contrib/scm/browser/git.contribution.ts",
+    "message": "$(sync) {0}$(arrow-down) {1}$(arrow-up)",
+    "reason": "Codicon markup and interpolated data, no display-language words."
+  },
+  {
+    "file": "src/vs/workbench/contrib/scm/browser/git.contribution.ts",
+    "message": "$(sync)",
+    "reason": "Codicon markup and interpolated data, no display-language words."
+  },
+  {
+    "file": "src/vs/workbench/contrib/scm/browser/git.contribution.ts",
+    "message": "$(git-branch) {0}",
+    "reason": "Codicon markup and interpolated data, no display-language words."
+  },
+  {
+    "file": "src/vs/workbench/contrib/scm/browser/git.contribution.ts",
+    "message": "$(cloud) {0}",
+    "reason": "Codicon markup and interpolated data, no display-language words."
+  },
+  {
+    "file": "src/vs/workbench/contrib/scm/browser/git.contribution.ts",
+    "message": "$(tag) {0}",
+    "reason": "Codicon markup and interpolated data, no display-language words."
+  }
+]

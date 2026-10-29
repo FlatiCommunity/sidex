@@ -14,22 +14,24 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { IExtensionGalleryService } from '../../../../platform/extensionManagement/common/extensionManagement.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { ILanguagePackService } from '../../../../platform/languagePacks/common/languagePacks.js';
+import { isEnglish, normalizeLocale, storedValue, storeValue } from '../../../../../localization/languagePacks.js';
 
 const localeStorage = new (class LocaleStorage {
 	private static readonly LOCAL_STORAGE_LOCALE_KEY = 'vscode.nls.locale';
 	private static readonly LOCAL_STORAGE_EXTENSION_ID_KEY = 'vscode.nls.languagePackExtensionId';
 
 	setLocale(locale: string): void {
-		localStorage.setItem(LocaleStorage.LOCAL_STORAGE_LOCALE_KEY, locale);
+		storeValue(LocaleStorage.LOCAL_STORAGE_LOCALE_KEY, locale);
 		this.doSetLocaleToCookie(locale);
 	}
 
 	private doSetLocaleToCookie(locale: string): void {
-		document.cookie = `${LocaleStorage.LOCAL_STORAGE_LOCALE_KEY}=${locale};path=/;max-age=3153600000`;
+		document.cookie = `${LocaleStorage.LOCAL_STORAGE_LOCALE_KEY}=${encodeURIComponent(locale)};path=/;max-age=3153600000`;
 	}
 
 	clearLocale(): void {
-		localStorage.removeItem(LocaleStorage.LOCAL_STORAGE_LOCALE_KEY);
+		storeValue(LocaleStorage.LOCAL_STORAGE_LOCALE_KEY, undefined);
 		this.doClearLocaleToCookie();
 	}
 
@@ -38,15 +40,15 @@ const localeStorage = new (class LocaleStorage {
 	}
 
 	setExtensionId(extensionId: string): void {
-		localStorage.setItem(LocaleStorage.LOCAL_STORAGE_EXTENSION_ID_KEY, extensionId);
+		storeValue(LocaleStorage.LOCAL_STORAGE_EXTENSION_ID_KEY, extensionId);
 	}
 
 	getExtensionId(): string | null {
-		return localStorage.getItem(LocaleStorage.LOCAL_STORAGE_EXTENSION_ID_KEY);
+		return storedValue(LocaleStorage.LOCAL_STORAGE_EXTENSION_ID_KEY);
 	}
 
 	clearExtensionId(): void {
-		localStorage.removeItem(LocaleStorage.LOCAL_STORAGE_EXTENSION_ID_KEY);
+		storeValue(LocaleStorage.LOCAL_STORAGE_EXTENSION_ID_KEY, undefined);
 	}
 })();
 
@@ -59,20 +61,22 @@ export class WebLocaleService implements ILocaleService {
 		@IProductService private readonly productService: IProductService
 	) {}
 
-	async setLocale(languagePackItem: ILanguagePackItem, _skipDialog = false): Promise<void> {
-		const locale = languagePackItem.id;
-		if (locale === Language.value() || (!locale && Language.value() === navigator.language.toLowerCase())) {
-			return;
-		}
+	async setLocale(languagePackItem: ILanguagePackItem, skipDialog = false): Promise<void> {
+		const locale = languagePackItem.id ? normalizeLocale(languagePackItem.id) : undefined;
+		const unchanged = locale === normalizeLocale(Language.value());
 		if (locale) {
 			localeStorage.setLocale(locale);
-			if (languagePackItem.extensionId) {
+			if (languagePackItem.extensionId && !isEnglish(locale)) {
 				localeStorage.setExtensionId(languagePackItem.extensionId);
+			} else {
+				localeStorage.clearExtensionId();
 			}
 		} else {
 			localeStorage.clearLocale();
 			localeStorage.clearExtensionId();
 		}
+
+		if (unchanged || skipDialog) return;
 
 		const restartDialog = await this.dialogService.confirm({
 			type: 'info',
@@ -127,7 +131,8 @@ class WebActiveLanguagePackService implements IActiveLanguagePackService {
 
 	constructor(
 		@IExtensionGalleryService private readonly galleryService: IExtensionGalleryService,
-		@ILogService private readonly logService: ILogService
+		@ILogService private readonly logService: ILogService,
+		@ILanguagePackService private readonly languagePackService: ILanguagePackService
 	) {}
 
 	async getExtensionIdProvidingCurrentLocale(): Promise<string | undefined> {
@@ -135,10 +140,9 @@ class WebActiveLanguagePackService implements IActiveLanguagePackService {
 		if (language === LANGUAGE_DEFAULT) {
 			return undefined;
 		}
-		const extensionId = localeStorage.getExtensionId();
-		if (extensionId) {
-			return extensionId;
-		}
+		const installed = await this.languagePackService.getInstalledLanguages();
+		const provider = installed.find(item => item.id && normalizeLocale(item.id) === normalizeLocale(language));
+		if (provider) return provider.extensionId;
 
 		if (!this.galleryService.isEnabled()) {
 			return undefined;
@@ -155,9 +159,6 @@ class WebActiveLanguagePackService implements IActiveLanguagePackService {
 				localeStorage.setExtensionId(extensionToInstall.identifier.id);
 				return extensionToInstall.identifier.id;
 			}
-
-			// TODO: If a non-Microsoft language pack is installed, we should prompt the user asking if they want to install that.
-			// Since no such language packs exist yet, we can wait until that happens to implement this.
 		} catch (e) {
 			// Best effort
 			this.logService.error(e);

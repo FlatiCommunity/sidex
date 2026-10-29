@@ -11,6 +11,7 @@ import { ILanguagePackItem, ILanguagePackService } from '../../../../platform/la
 import { IQuickPickItem, IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { LANGUAGE_DEFAULT, Language } from '../../../../base/common/platform.js';
 import { ILocaleService } from '../../../services/localization/common/locale.js';
+import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 
 registerAction2(
 	class ConfigureDisplayLanguageAction extends Action2 {
@@ -18,7 +19,7 @@ registerAction2(
 			super({
 				id: 'workbench.action.configureLocale',
 				title: localize2('configureLocale', 'Configure Display Language'),
-				category: 'Preferences',
+				category: Categories.Preferences,
 				f1: true
 			});
 		}
@@ -79,9 +80,7 @@ registerAction2(
 				return;
 			}
 
-			if (selectedLocale === 'en') {
-				await localeService.clearLocalePreference();
-			} else {
+			{
 				const languagePackItem: ILanguagePackItem = {
 					id: selectedLocale,
 					label: pick.label,

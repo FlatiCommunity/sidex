@@ -1,0 +1,16 @@
+{
+  "contents": {
+    "vs/workbench/contrib/remote/browser/remote.contribution": {
+      "remoteExplorer": "원격 탐색기",
+      "remote.pick.connectToTunnel": "터널에 연결…",
+      "remote.pick.connectToHost": "호스트에 연결…",
+      "remote.pick.wsl": "WSL에 연결…",
+      "remote.pick.container": "컨테이너에서 폴더 열기…",
+      "remote.pick.codespace": "Codespace에 연결…",
+      "remote.pick.placeholder": "원격 창을 여는 옵션 선택"
+    },
+    "vs/workbench/contrib/remote/browser/remoteExplorer": {
+      "remoteExplorer": "원격 탐색기"
+    }
+  }
+}

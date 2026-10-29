@@ -1,0 +1,16 @@
+{
+  "contents": {
+    "vs/workbench/contrib/remote/browser/remote.contribution": {
+      "remoteExplorer": "リモート エクスプローラー",
+      "remote.pick.connectToTunnel": "トンネルに接続…",
+      "remote.pick.connectToHost": "ホストに接続…",
+      "remote.pick.wsl": "WSL に接続…",
+      "remote.pick.container": "コンテナーでフォルダーを開く…",
+      "remote.pick.codespace": "Codespace に接続…",
+      "remote.pick.placeholder": "リモートウィンドウを開くオプションを選択"
+    },
+    "vs/workbench/contrib/remote/browser/remoteExplorer": {
+      "remoteExplorer": "リモート エクスプローラー"
+    }
+  }
+}

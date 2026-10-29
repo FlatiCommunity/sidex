@@ -3,118 +3,116 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { RUSSIAN_BUILTIN_EXTENSIONS } from '../../../../localization/builtinTranslations.js';
 import { URI } from '../../../base/common/uri.js';
 import { ILanguagePackItem, ILanguagePackService } from '../common/languagePacks.js';
 import { IExtensionGalleryService } from '../../extensionManagement/common/extensionManagement.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { IExtensionService } from '../../../workbench/services/extensions/common/extensions.js';
-
-const LANGUAGE_PACK_EXTENSION_PREFIX = 'vscode-language-pack-';
-const LANGUAGE_PACK_LOCALE_ALIASES: Readonly<Record<string, string>> = {
-	'zh-hans': 'zh-cn',
-	'zh-hant': 'zh-tw'
-};
+import {
+	BUILTIN_LANGUAGES,
+	findLocalization,
+	getLocalizations,
+	normalizeLocale,
+	scanInstalledLanguagePacks,
+	storedValue,
+	translationPath,
+	InstalledLanguagePack
+} from '../../../../localization/languagePacks.js';
 
 export class WebLanguagePacksService implements ILanguagePackService {
 	declare readonly _serviceBrand: undefined;
+	private nativePacks: Promise<InstalledLanguagePack[]> | undefined;
 
 	constructor(
 		@IExtensionGalleryService private readonly galleryService: IExtensionGalleryService,
 		@IExtensionService private readonly extensionService: IExtensionService
 	) {}
 
-	async getBuiltInExtensionTranslationsUri(_id: string, _language: string): Promise<URI | undefined> {
+	async getBuiltInExtensionTranslationsUri(id: string, language: string): Promise<URI | undefined> {
+		const preferred = storedValue('vscode.nls.languagePackExtensionId')?.toLowerCase();
+		// All built-in manifests are resolved during startup; share one native scan among them.
+		const installed = await (this.nativePacks ??= scanInstalledLanguagePacks());
+		installed.sort(
+			(a, b) => Number(b.extensionId.toLowerCase() === preferred) - Number(a.extensionId.toLowerCase() === preferred)
+		);
+		for (const pack of installed) {
+			const contribution = findLocalization(pack.localizations, language);
+			const path = contribution?.translations.find(
+				translation => translation.id.toLowerCase() === id.toLowerCase()
+			)?.path;
+			const relativePath = path && translationPath(path);
+			if (relativePath) return URI.joinPath(URI.file(pack.extensionPath), relativePath);
+		}
+		for (const extension of this.extensionService.extensions) {
+			const contribution = findLocalization(getLocalizations(extension), language);
+			const path = contribution?.translations.find(
+				translation => translation.id.toLowerCase() === id.toLowerCase()
+			)?.path;
+			const relativePath = path && translationPath(path);
+			if (relativePath) return URI.joinPath(extension.extensionLocation, relativePath);
+		}
+		if (normalizeLocale(language).split('-')[0] === 'ru' && RUSSIAN_BUILTIN_EXTENSIONS.has(id.toLowerCase())) {
+			return URI.parse(
+				new URL(`/locales/ru/extensions/${id.toLowerCase()}.i18n.json`, globalThis.location.href).toString()
+			);
+		}
 		return undefined;
 	}
 
 	async getAvailableLanguages(): Promise<ILanguagePackItem[]> {
-		if (!this.galleryService.isEnabled()) {
-			return [];
-		}
+		const items = new Map<string, ILanguagePackItem>(BUILTIN_LANGUAGES.map(language => [language.id, { ...language }]));
+		if (!this.galleryService.isEnabled()) return [...items.values()];
 		try {
 			const result = await this.galleryService.query(
-				{ text: '@category:"language packs"', pageSize: 50 },
+				{ text: '@category:"language packs"', pageSize: 100 },
 				CancellationToken.None
 			);
-			return result.firstPage
-				.filter(ext => ext.name.startsWith('vscode-language-pack'))
-				.map(ext => {
-					const locale =
-						ext.tags.find(t => t.startsWith('lp-'))?.slice(3) ?? ext.name.replace('vscode-language-pack-', '');
-					return {
-						id: locale,
-						label: ext.displayName ?? ext.name,
-						description: ext.description,
-						extensionId: ext.identifier.id,
-						galleryExtension: ext
-					};
+			for (const extension of result.firstPage) {
+				const taggedLocale = extension.tags.find(tag => tag.startsWith('lp-'))?.slice(3);
+				if (!taggedLocale) continue;
+				const id = normalizeLocale(taggedLocale);
+				if (items.has(id)) continue;
+				items.set(id, {
+					id,
+					label: extension.displayName ?? extension.name,
+					description: extension.description,
+					extensionId: extension.identifier.id,
+					galleryExtension: extension
 				});
+			}
 		} catch {
-			return [];
+			/* Built-in languages remain usable offline. */
 		}
+		return [...items.values()];
 	}
 
 	async getInstalledLanguages(): Promise<ILanguagePackItem[]> {
-		const items: ILanguagePackItem[] = [];
-		const seenLocales = new Set<string>();
-		const extensionId = localStorage.getItem('vscode.nls.languagePackExtensionId');
-		const locale = localStorage.getItem('vscode.nls.locale');
-
-		if (extensionId && locale) {
-			items.push({
-				id: locale,
-				label: this.getLanguageLabel(locale),
-				extensionId
-			});
-			seenLocales.add(locale.toLowerCase());
+		const items = new Map<string, ILanguagePackItem>(BUILTIN_LANGUAGES.map(language => [language.id, { ...language }]));
+		// Disabled packs still supply translations; they do not need an extension-host entry point.
+		// Opening the language picker refreshes the cache after an install or uninstall.
+		for (const pack of await (this.nativePacks = scanInstalledLanguagePacks())) {
+			for (const localization of pack.localizations) {
+				const id = normalizeLocale(localization.languageId);
+				items.set(id, {
+					id,
+					label: localization.localizedLanguageName || localization.languageName || id,
+					extensionId: pack.extensionId
+				});
+			}
 		}
-
 		for (const extension of this.extensionService.extensions) {
-			if (!extension.name.startsWith(LANGUAGE_PACK_EXTENSION_PREFIX)) {
-				continue;
+			for (const localization of getLocalizations(extension)) {
+				const id = normalizeLocale(localization.languageId);
+				if (items.has(id) && !BUILTIN_LANGUAGES.some(language => language.id === id)) continue;
+				items.set(id, {
+					id,
+					label: localization.localizedLanguageName || localization.languageName || id,
+					extensionId: extension.identifier.value
+				});
 			}
-
-			const extensionLocale = this.getLocaleFromExtensionName(extension.name);
-			if (!extensionLocale || seenLocales.has(extensionLocale.toLowerCase())) {
-				continue;
-			}
-
-			items.push({
-				id: extensionLocale,
-				label: this.getLanguageLabel(extensionLocale),
-				extensionId: extension.identifier.value
-			});
-			seenLocales.add(extensionLocale.toLowerCase());
 		}
-
-		return items;
-	}
-
-	private getLanguageLabel(locale: string): string {
-		const labels: Record<string, string> = {
-			'zh-cn': '中文(简体)',
-			'zh-tw': '中文(繁體)',
-			ja: '日本語',
-			ko: '한국어',
-			de: 'Deutsch',
-			fr: 'Français',
-			es: 'Español',
-			it: 'Italiano',
-			'pt-br': 'Português (Brasil)',
-			ru: 'Русский',
-			tr: 'Türkçe',
-			pl: 'Polski',
-			cs: 'Čeština',
-			hu: 'Magyar'
-		};
-		return labels[locale.toLowerCase()] ?? locale;
-	}
-
-	private getLocaleFromExtensionName(name: string): string | undefined {
-		const locale = name.slice(LANGUAGE_PACK_EXTENSION_PREFIX.length);
-		if (!locale) {
-			return undefined;
-		}
-		return LANGUAGE_PACK_LOCALE_ALIASES[locale.toLowerCase()] ?? locale;
+		// An old preference is not evidence that the pack is still installed.
+		return [...items.values()];
 	}
 }
