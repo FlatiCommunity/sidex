@@ -46,47 +46,44 @@ pub fn parse_jsonc_with_comments(input: &str) -> Result<(Value, Vec<JsoncComment
 
 /// Remove comments but preserve line numbers (replace comment chars with spaces).
 pub fn strip_comments(input: &str) -> String {
-    let b = input.as_bytes();
-    let (len, mut out, mut i) = (b.len(), String::with_capacity(b.len()), 0);
-    while i < len {
-        match b[i] {
-            b'"' => {
-                out.push('"');
-                i += 1;
-                i = skip_string(b, i, &mut out);
+    let bytes = input.as_bytes();
+    let mut output = bytes.to_vec();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos] == b'"' {
+            pos = string_end(bytes, pos);
+        } else if bytes.get(pos..pos + 2) == Some(b"//") {
+            let start = pos;
+            while pos < bytes.len() && !matches!(bytes[pos], b'\n' | b'\r') {
+                pos += 1;
             }
-            b'/' if i + 1 < len && b[i + 1] == b'/' => {
-                i += 2;
-                while i < len && b[i] != b'\n' {
-                    out.push(' ');
-                    i += 1;
+            output[start..pos].fill(b' ');
+        } else if bytes.get(pos..pos + 2) == Some(b"/*") {
+            let start = pos;
+            pos += 2;
+            let mut depth = 1;
+            while pos < bytes.len() && depth > 0 {
+                if bytes.get(pos..pos + 2) == Some(b"/*") {
+                    depth += 1;
+                    pos += 2;
+                } else if bytes.get(pos..pos + 2) == Some(b"*/") {
+                    depth -= 1;
+                    pos += 2;
+                } else {
+                    pos += 1;
                 }
             }
-            b'/' if i + 1 < len && b[i + 1] == b'*' => {
-                i += 2;
-                let mut depth: u32 = 1;
-                while i < len && depth > 0 {
-                    if i + 1 < len && b[i] == b'/' && b[i + 1] == b'*' {
-                        depth += 1;
-                        out.push_str("  ");
-                        i += 2;
-                    } else if i + 1 < len && b[i] == b'*' && b[i + 1] == b'/' {
-                        depth -= 1;
-                        out.push_str("  ");
-                        i += 2;
-                    } else {
-                        out.push(if b[i] == b'\n' { '\n' } else { ' ' });
-                        i += 1;
-                    }
+            for byte in &mut output[start..pos] {
+                if !matches!(*byte, b'\n' | b'\r') {
+                    *byte = b' ';
                 }
             }
-            _ => {
-                out.push(b[i] as char);
-                i += 1;
-            }
+        } else {
+            pos += 1;
         }
     }
-    out
+    // Only complete comment byte ranges were replaced with ASCII whitespace.
+    String::from_utf8(output).expect("stripping comments preserves UTF-8")
 }
 
 /// Pretty-print a `serde_json::Value` as JSONC-compatible JSON.
@@ -99,58 +96,193 @@ pub fn modify_jsonc(input: &str, path: &[&str], value: &Value) -> Result<String>
     if path.is_empty() {
         return Ok(format_jsonc(value, 2));
     }
-    let mut root = parse_jsonc(input)?;
-    let mut target = &mut root;
-    for (i, key) in path.iter().enumerate() {
-        if i == path.len() - 1 {
-            match target {
-                Value::Object(m) => {
-                    m.insert((*key).to_string(), value.clone());
-                }
-                _ => anyhow::bail!("path element '{key}' is not an object"),
+    parse_jsonc(input)?;
+    // The stripped text has exactly the same byte offsets as the source.
+    let clean = strip_comments(input);
+    let mut object_start = skip_whitespace(clean.as_bytes(), 0);
+    for (index, key) in path.iter().enumerate() {
+        let object = object_layout(&clean, object_start)?;
+        if let Some(property) = object
+            .properties
+            .iter()
+            .rev()
+            .find(|property| property.key == *key)
+        {
+            if index == path.len() - 1 {
+                let mut result = input.to_string();
+                result.replace_range(
+                    property.value_start..property.value_end,
+                    &serde_json::to_string(value)?,
+                );
+                return Ok(result);
             }
+            object_start = property.value_start;
         } else {
-            target = match target {
-                Value::Object(m) => m
-                    .entry((*key).to_string())
-                    .or_insert_with(|| Value::Object(serde_json::Map::new())),
-                _ => anyhow::bail!("path element '{key}' is not an object"),
-            };
+            let mut nested = value.clone();
+            for part in path[index + 1..].iter().rev() {
+                nested = Value::Object(serde_json::Map::from_iter([(part.to_string(), nested)]));
+            }
+            return insert_property(input, &clean, &object, key, &nested);
         }
     }
-    let needle = format!("\"{}\"", path.last().unwrap());
-    if let Some(kp) = find_key_in_src(input, &needle) {
-        let colon = input[kp + needle.len()..].find(':').unwrap() + kp + needle.len();
-        let (vs, ve) = value_span(input, colon + 1);
-        let ser = serde_json::to_string(value).unwrap();
-        let mut r = String::with_capacity(input.len() + ser.len());
-        r.push_str(&input[..vs]);
-        r.push_str(&ser);
-        r.push_str(&input[ve..]);
-        Ok(r)
-    } else {
-        Ok(format_jsonc(&root, 2))
+    unreachable!("a nonempty path either replaces or inserts a property")
+}
+
+fn string_end(bytes: &[u8], start: usize) -> usize {
+    let mut pos = start + 1;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos = (pos + 2).min(bytes.len()),
+            b'"' => return pos + 1,
+            _ => pos += 1,
+        }
+    }
+    bytes.len()
+}
+
+fn skip_whitespace(bytes: &[u8], mut pos: usize) -> usize {
+    while bytes.get(pos).is_some_and(u8::is_ascii_whitespace) {
+        pos += 1;
+    }
+    pos
+}
+
+fn json_value_end(clean: &str, start: usize) -> usize {
+    let bytes = clean.as_bytes();
+    if bytes.get(start) == Some(&b'"') {
+        return string_end(bytes, start);
+    }
+    if matches!(bytes.get(start), Some(b'{' | b'[')) {
+        let mut depth = 1;
+        let mut pos = start + 1;
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b'"' => {
+                    pos = string_end(bytes, pos);
+                    continue;
+                }
+                b'{' | b'[' => depth += 1,
+                b'}' | b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return pos + 1;
+                    }
+                }
+                _ => {}
+            }
+            pos += 1;
+        }
+        return pos;
+    }
+    let mut pos = start;
+    while bytes
+        .get(pos)
+        .is_some_and(|byte| !byte.is_ascii_whitespace() && !matches!(*byte, b',' | b'}' | b']'))
+    {
+        pos += 1;
+    }
+    pos
+}
+
+struct PropertySpan {
+    key: String,
+    key_start: usize,
+    value_start: usize,
+    value_end: usize,
+}
+struct ObjectLayout {
+    properties: Vec<PropertySpan>,
+    close: usize,
+}
+
+fn object_layout(clean: &str, start: usize) -> Result<ObjectLayout> {
+    let bytes = clean.as_bytes();
+    anyhow::ensure!(
+        bytes.get(start) == Some(&b'{'),
+        "settings path is not an object"
+    );
+    let mut properties = Vec::new();
+    let mut pos = start + 1;
+    loop {
+        pos = skip_whitespace(bytes, pos);
+        if bytes.get(pos) == Some(&b'}') {
+            return Ok(ObjectLayout {
+                properties,
+                close: pos,
+            });
+        }
+        anyhow::ensure!(bytes.get(pos) == Some(&b'"'), "expected an object property");
+        let key_start = pos;
+        let key_end = string_end(bytes, pos);
+        let key = serde_json::from_str(&clean[pos..key_end])?;
+        pos = skip_whitespace(bytes, key_end);
+        anyhow::ensure!(
+            bytes.get(pos) == Some(&b':'),
+            "expected a property separator"
+        );
+        let value_start = skip_whitespace(bytes, pos + 1);
+        let value_end = json_value_end(clean, value_start);
+        properties.push(PropertySpan {
+            key,
+            key_start,
+            value_start,
+            value_end,
+        });
+        pos = skip_whitespace(bytes, value_end);
+        if bytes.get(pos) == Some(&b',') {
+            pos += 1;
+        }
     }
 }
 
-// --- helpers ---
+fn line_indent(input: &str, position: usize) -> Option<&str> {
+    let start = input[..position].rfind('\n').map_or(0, |offset| offset + 1);
+    let prefix = &input[start..position];
+    prefix
+        .bytes()
+        .all(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
+        .then_some(prefix)
+}
 
-fn skip_string(b: &[u8], mut i: usize, out: &mut String) -> usize {
-    while i < b.len() {
-        if b[i] == b'\\' && i + 1 < b.len() {
-            out.push(b[i] as char);
-            out.push(b[i + 1] as char);
-            i += 2;
-        } else if b[i] == b'"' {
-            out.push('"');
-            i += 1;
-            break;
-        } else {
-            out.push(b[i] as char);
-            i += 1;
+fn insert_property(
+    input: &str,
+    clean: &str,
+    object: &ObjectLayout,
+    key: &str,
+    value: &Value,
+) -> Result<String> {
+    let newline = if input.contains("\r\n") { "\r\n" } else { "\n" };
+    let closing_indent = line_indent(input, object.close).unwrap_or("");
+    let fallback_indent = format!("{closing_indent}  ");
+    let indent = object
+        .properties
+        .first()
+        .and_then(|property| line_indent(input, property.key_start))
+        .unwrap_or(&fallback_indent);
+    let insert_at = object.close - closing_indent.len();
+    let trailing_comma = object
+        .properties
+        .last()
+        .is_some_and(|property| clean[property.value_end..object.close].contains(','));
+    let separator = if input[..insert_at].ends_with('\n') {
+        ""
+    } else {
+        newline
+    };
+    let addition = format!(
+        "{separator}{indent}{}: {}{}{newline}",
+        serde_json::to_string(key)?,
+        serde_json::to_string(value)?,
+        if trailing_comma { "," } else { "" }
+    );
+    let mut result = input.to_string();
+    result.insert_str(insert_at, &addition);
+    if let Some(last) = object.properties.last() {
+        if !trailing_comma {
+            result.insert(last.value_end, ',');
         }
     }
-    i
+    Ok(result)
 }
 
 fn fmt_val(v: &Value, ind: &str, d: usize) -> String {
@@ -183,105 +315,6 @@ fn fmt_val(v: &Value, ind: &str, d: usize) -> String {
         }
         _ => serde_json::to_string(v).unwrap(),
     }
-}
-
-fn find_key_in_src(input: &str, needle: &str) -> Option<usize> {
-    let (b, nb) = (input.as_bytes(), needle.as_bytes());
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'"' => {
-                let s = i;
-                i += 1;
-                while i < b.len() {
-                    if b[i] == b'\\' && i + 1 < b.len() {
-                        i += 2;
-                    } else if b[i] == b'"' {
-                        i += 1;
-                        if &b[s..i] == nb {
-                            return Some(s);
-                        }
-                        break;
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
-                while i < b.len() && b[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
-                i += 2;
-                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
-                    i += 1;
-                }
-                if i + 1 < b.len() {
-                    i += 2;
-                }
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-    None
-}
-
-fn value_span(input: &str, after: usize) -> (usize, usize) {
-    let bytes = input.as_bytes();
-    let mut pos = after;
-    while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
-        pos += 1;
-    }
-    let start = pos;
-    match bytes.get(pos) {
-        Some(b'"') => {
-            pos += 1;
-            while pos < bytes.len() {
-                if bytes[pos] == b'\\' && pos + 1 < bytes.len() {
-                    pos += 2;
-                } else if bytes[pos] == b'"' {
-                    return (start, pos + 1);
-                } else {
-                    pos += 1;
-                }
-            }
-        }
-        Some(&ch @ (b'{' | b'[')) => {
-            let close = if ch == b'{' { b'}' } else { b']' };
-            let mut depth = 1;
-            pos += 1;
-            while pos < bytes.len() && depth > 0 {
-                if bytes[pos] == ch {
-                    depth += 1;
-                } else if bytes[pos] == close {
-                    depth -= 1;
-                } else if bytes[pos] == b'"' {
-                    pos += 1;
-                    while pos < bytes.len() {
-                        if bytes[pos] == b'\\' && pos + 1 < bytes.len() {
-                            pos += 2;
-                        } else if bytes[pos] == b'"' {
-                            break;
-                        } else {
-                            pos += 1;
-                        }
-                    }
-                }
-                pos += 1;
-            }
-            return (start, pos);
-        }
-        _ => {
-            while pos < bytes.len() && !matches!(bytes[pos], b',' | b'}' | b']' | b'\n') {
-                pos += 1;
-            }
-            return (start, input[start..pos].trim_end().len() + start);
-        }
-    }
-    (start, input.len())
 }
 
 fn extract_comments(input: &str) -> Vec<JsoncComment> {
@@ -358,35 +391,66 @@ fn extract_comments(input: &str) -> Vec<JsoncComment> {
 }
 
 fn remove_trailing_commas(input: &str) -> String {
-    let b = input.as_bytes();
-    let (len, mut out, mut i) = (b.len(), String::with_capacity(b.len()), 0);
-    while i < len {
-        if b[i] == b'"' {
-            out.push('"');
-            i += 1;
-            i = skip_string(b, i, &mut out);
-        } else if b[i] == b',' {
-            let mut j = i + 1;
-            while j < len && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r') {
-                j += 1;
-            }
-            if j < len && matches!(b[j], b']' | b'}') {
-                i += 1;
-            } else {
-                out.push(',');
-                i += 1;
-            }
+    let bytes = input.as_bytes();
+    let mut output = bytes.to_vec();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos] == b'"' {
+            pos = string_end(bytes, pos);
         } else {
-            out.push(b[i] as char);
-            i += 1;
+            if bytes[pos] == b',' {
+                let next = skip_whitespace(bytes, pos + 1);
+                if matches!(bytes.get(next), Some(b']' | b'}')) {
+                    output[pos] = b' ';
+                }
+            }
+            pos += 1;
         }
     }
-    out
+    String::from_utf8(output).expect("removing ASCII commas preserves UTF-8")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unicode_and_byte_offsets_survive_jsonc_processing() {
+        let source = "{\n // Русский комментарий 🌏\n \"тема\": \"Светлая 日本語 🌙\",\n}";
+        assert_eq!(strip_comments(source).len(), source.len());
+        assert_eq!(parse_jsonc(source).unwrap()["тема"], "Светлая 日本語 🌙");
+        let updated = modify_jsonc(source, &["тема"], &Value::from("Тёмная")).unwrap();
+        assert!(updated.contains("// Русский комментарий 🌏"));
+        assert_eq!(parse_jsonc(&updated).unwrap()["тема"], "Тёмная");
+    }
+
+    #[test]
+    fn edits_follow_full_paths_and_ignore_matching_strings() {
+        let source = r#"{ "text": "key", "a": {"key": 1}, "b": { "key": /* keep */ 2 } }"#;
+        let updated = modify_jsonc(source, &["b", "key"], &Value::from(3)).unwrap();
+        let value = parse_jsonc(&updated).unwrap();
+        assert_eq!(value["a"]["key"], 1);
+        assert_eq!(value["b"]["key"], 3);
+        assert_eq!(value["text"], "key");
+        assert!(updated.contains("/* keep */"));
+    }
+
+    #[test]
+    fn inserting_settings_preserves_comments_trailing_commas_and_escaped_keys() {
+        for source in [
+            "{\n // keep\n}",
+            "{\n \"a\": 1 // keep\n}",
+            "{\r\n \"a\": 1, // keep\r\n}",
+        ] {
+            let updated =
+                modify_jsonc(source, &["editor.test", "a\"b"], &Value::from("строка")).unwrap();
+            assert!(updated.contains("// keep"));
+            assert_eq!(
+                parse_jsonc(&updated).unwrap()["editor.test"]["a\"b"],
+                "строка"
+            );
+        }
+    }
 
     #[test]
     fn parse_strips_comments_and_trailing_commas() {

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde_json::Value;
-use sidex_settings::{modify_jsonc, parse_jsonc, Settings};
+use sidex_settings::{Settings, modify_jsonc, parse_jsonc, persist_setting};
 use tauri::{AppHandle, State};
 
 pub struct SettingsStore {
@@ -10,6 +10,7 @@ pub struct SettingsStore {
     /// Path of the user settings.json — set during app startup so user-scope
     /// updates can be persisted to disk (otherwise toggles vanish on restart).
     user_path: RwLock<Option<PathBuf>>,
+    user_updates: Mutex<()>,
 }
 
 impl SettingsStore {
@@ -17,10 +18,12 @@ impl SettingsStore {
         Self {
             inner: RwLock::new(Settings::new()),
             user_path: RwLock::new(None),
+            user_updates: Mutex::new(()),
         }
     }
 
     pub fn load_user(&self, path: &std::path::Path) -> Result<(), String> {
+        let _guard = self.user_updates.lock().map_err(|e| e.to_string())?;
         self.set_user_path(path);
         self.inner
             .write()
@@ -36,34 +39,23 @@ impl SettingsStore {
         }
     }
 
-    /// Serialize the current user layer to the user settings file.
-    fn persist_user_layer(&self) -> Result<(), String> {
-        let Some(path) = self.user_path.read().map_err(|e| e.to_string())?.clone() else {
-            return Ok(()); // path unknown (tests/headless) — skip silently
-        };
-        let layer = {
-            let settings = self.inner.read().map_err(|e| e.to_string())?;
-            settings.user_layer().clone()
-        };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    /// Serialize updates and edit the latest disk contents, preserving unrelated edits.
+    fn update_user(&self, key: &str, value: Value) -> Result<(), String> {
+        let _guard = self.user_updates.lock().map_err(|e| e.to_string())?;
+        let path = self.user_path.read().map_err(|e| e.to_string())?.clone();
+        if let Some(path) = path {
+            persist_setting(&path, key, &value).map_err(|e| format!("{e:#}"))?;
+            self.inner
+                .write()
+                .map_err(|e| e.to_string())?
+                .load_user(&path)
+                .map_err(|e| e.to_string())?;
+        } else {
+            self.inner
+                .write()
+                .map_err(|e| e.to_string())?
+                .set(key, value);
         }
-        let json = serde_json::to_string_pretty(&layer).map_err(|e| e.to_string())?;
-        // Write atomically: unique temp file + rename, so a crash mid-write
-        // can't corrupt settings.json and two concurrent persists can't
-        // interleave on a shared tmp path.
-        let tmp = path.with_extension(format!(
-            "json.tmp.{}.{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        ));
-        std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            e.to_string()
-        })?;
         Ok(())
     }
 
@@ -138,24 +130,17 @@ pub fn settings_update(
     value: Value,
     scope: String,
 ) -> Result<(), String> {
-    {
-        let mut settings = state.inner.write().map_err(|e| e.to_string())?;
-
-        match scope.as_str() {
-            "user" => settings.set(&key, value),
-            "workspace" => settings.set_workspace(&key, value),
-            _ => {
-                return Err(format!(
-                    "invalid scope '{scope}': expected \"user\" or \"workspace\""
-                ))
-            }
-        }
-    }
-
-    // Persist user-scope changes so they survive app restarts.
-    if scope == "user" {
-        if let Err(e) = state.persist_user_layer() {
-            log::warn!("failed to persist user settings: {e}");
+    match scope.as_str() {
+        "user" => state.update_user(&key, value)?,
+        "workspace" => state
+            .inner
+            .write()
+            .map_err(|e| e.to_string())?
+            .set_workspace(&key, value),
+        _ => {
+            return Err(format!(
+                "invalid scope '{scope}': expected user or workspace"
+            ));
         }
     }
 

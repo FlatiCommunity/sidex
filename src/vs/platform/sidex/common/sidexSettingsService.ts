@@ -29,7 +29,7 @@ export class SideXSettingsService {
 	}
 
 	async update(key: string, value: unknown, scope: string = 'user'): Promise<void> {
-		return invoke('settings_update', { key, value: JSON.stringify(value), scope });
+		return invoke('settings_update', { key, value, scope });
 	}
 }
 

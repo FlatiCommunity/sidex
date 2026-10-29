@@ -9,11 +9,13 @@ pub mod defaults;
 pub mod jsonc;
 pub mod migration;
 pub mod profiles;
+pub mod persist;
 pub mod schema;
 pub mod settings;
 pub mod sync;
 
 pub use defaults::builtin_defaults;
+pub use persist::persist_setting;
 pub use jsonc::{
     format_jsonc, modify_jsonc, parse_jsonc, parse_jsonc_with_comments, strip_comments,
     CommentKind, JsoncComment, JsoncError,
