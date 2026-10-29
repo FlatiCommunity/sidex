@@ -1109,6 +1109,25 @@
     },
     "vs/workbench/contrib/search/browser/replaceService": {
       "fileReplaceChanges": "{0} ↔ {1} (替换预览)"
+    },
+    "vs/workbench/browser/actions/sidexWindowActions": {
+      "closeWindow": "关闭窗口",
+      "miCloseWindow": "关闭窗口(&&E)",
+      "zoomIn": "放大",
+      "miZoomIn": "放大(&&Z)",
+      "zoomOut": "缩小",
+      "miZoomOut": "缩小(&&Z)",
+      "zoomReset": "重置缩放",
+      "miZoomReset": "重置缩放(&&R)",
+      "zoomLevel": "调整窗口的缩放级别。每一步将缩放比例更改 20%。",
+      "welcome": "欢迎",
+      "releaseNotes": "发行说明",
+      "reportIssue": "报告问题"
+    },
+    "vs/workbench/services/dialogs/browser/fileDialogService": {
+      "openFolder": "打开文件夹",
+      "openFile": "打开文件",
+      "openWorkspace": "打开工作区"
     }
   }
 }

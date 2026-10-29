@@ -47,6 +47,24 @@ for (const entry of entries) {
 	if (original !== undefined && original !== entry.message) failures.push(`Ambiguous NLS key: ${identity}`);
 	originals.set(identity, entry.message);
 }
+const builtIndex = process.argv.includes('--dist')
+	? JSON.parse(fs.readFileSync(path.join(root, 'dist/nls.messages.json'), 'utf8'))
+	: undefined;
+if (builtIndex) {
+	const builtKeys = new Set();
+	for (const [moduleId, key, message] of builtIndex.messages) {
+		const identity = `${builtIndex.modules[moduleId]}#${key}`;
+		if (builtKeys.has(identity) || originals.get(identity) !== message) {
+			failures.push(`Stale or duplicated built NLS entry: ${identity}`);
+		}
+		builtKeys.add(identity);
+	}
+	if (builtKeys.size !== originals.size) {
+		failures.push(
+			`Stale built NLS catalog: ${builtKeys.size} entries; current source requires ${originals.size}. Rebuild before validating dist.`
+		);
+	}
+}
 const localeArgument = process.argv.indexOf('--locale');
 const locales = localeArgument >= 0 ? [process.argv[localeArgument + 1]] : ['ru', 'zh-cn', 'zh-tw'];
 const reports = [];
@@ -97,14 +115,13 @@ for (const locale of locales) {
 			else manifestKeys++;
 		}
 	}
-	if (process.argv.includes('--dist')) {
-		const index = JSON.parse(fs.readFileSync(path.join(root, 'dist/nls.messages.json'), 'utf8'));
-		for (const [moduleId, key, message] of index.messages) {
-			const translated = catalog[index.modules[moduleId]]?.[key];
+	if (builtIndex) {
+		for (const [moduleId, key, message] of builtIndex.messages) {
+			const translated = catalog[builtIndex.modules[moduleId]]?.[key];
 			if (typeof translated !== 'string' || placeholders(translated) !== placeholders(message))
-				failures.push(`Missing built translation: ${locale}:${index.modules[moduleId]}#${key}`);
+				failures.push(`Missing built translation: ${locale}:${builtIndex.modules[moduleId]}#${key}`);
 		}
-		reports.push(`${locale}: ${index.messages.length} built NLS entries validated.`);
+		reports.push(`${locale}: ${builtIndex.messages.length} built NLS entries validated.`);
 	}
 	reports.push(
 		`${locale}: ${entries.length}/${entries.length} source NLS calls; ${originals.size} unique keys; ${neutral} explicit neutral names/formats; ${manifests} built-in catalogs, ${manifestKeys} translated manifest keys.`

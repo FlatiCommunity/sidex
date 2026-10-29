@@ -1160,6 +1160,25 @@
       "ssh.folderPrompt": "Удалённая папка для открытия на {0}",
       "ssh.absoluteFolder": "Введите абсолютный путь к удалённой папке.",
       "ssh.folderRequired": "Выбранный удалённый путь не является папкой."
+    },
+    "vs/workbench/browser/actions/sidexWindowActions": {
+      "closeWindow": "Закрыть окно",
+      "miCloseWindow": "Закрыть &&окно",
+      "zoomIn": "Увеличить",
+      "miZoomIn": "&&Увеличить",
+      "zoomOut": "Уменьшить",
+      "miZoomOut": "&&Уменьшить",
+      "zoomReset": "Сбросить масштаб",
+      "miZoomReset": "&&Сбросить масштаб",
+      "zoomLevel": "Настройка масштаба окна. Каждый шаг изменяет масштаб на 20%.",
+      "welcome": "Приветствие",
+      "releaseNotes": "Заметки о выпуске",
+      "reportIssue": "Сообщить о проблеме"
+    },
+    "vs/workbench/services/dialogs/browser/fileDialogService": {
+      "openFolder": "Открыть папку",
+      "openFile": "Открыть файл",
+      "openWorkspace": "Открыть рабочую область"
     }
   }
 }
