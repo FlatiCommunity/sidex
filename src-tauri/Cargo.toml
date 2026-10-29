@@ -26,7 +26,6 @@ tauri = { version = "2.10.3", features = [
   "devtools",
 ] }
 tauri-plugin-log = "2"
-tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 jsonwebtoken = { version = "10.4", features = ["aws_lc_rs"] }
 
@@ -129,6 +128,14 @@ urlencoding = "2.1.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Delegate file selection to the active desktop portal (KDE, GNOME, Flatpak).
+# rfd's default GTK backend otherwise forces the GTK picker on every Linux desktop.
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri-plugin-dialog = "2"
 
 [lints.rust]
 unsafe_code = "deny"
