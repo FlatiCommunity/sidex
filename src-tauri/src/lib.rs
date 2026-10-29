@@ -859,6 +859,7 @@ pub fn run() {
             commands::search_text,
             commands::create_window,
             commands::window::take_startup_targets,
+            commands::wsl_fs::wsl_file_request,
             commands::close_window,
             commands::set_window_title,
             commands::get_monitors,

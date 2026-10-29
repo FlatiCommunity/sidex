@@ -18,6 +18,96 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 use std::time::SystemTime;
 
+/// Execute a filesystem operation in Linux, never through Windows UNC or a
+/// command assembled from filenames. The helper requires Python 3 in the distro.
+#[cfg(target_os = "windows")]
+pub async fn file_request(distro: &str, request: &serde_json::Value) -> Result<serde_json::Value> {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+
+    if distro.is_empty() || distro.len() > 255 || distro.contains(['\0', '\r', '\n']) {
+        bail!("Invalid WSL distribution name");
+    }
+    let input = serde_json::to_vec(request)?;
+    if input.len() > 160 * 1024 * 1024 {
+        bail!("FileTooLarge: WSL request exceeds the transfer limit");
+    }
+    let operation = async {
+        let mut command = tokio::process::Command::new("wsl.exe");
+        command
+            .args([
+                "--distribution",
+                distro,
+                "--exec",
+                "sh",
+                "-c",
+                "command -v python3 >/dev/null 2>&1 || { printf 'WSL_PYTHON_REQUIRED\\n' >&2; exit 127; }; exec python3 -c \"$1\"",
+                "sidex-wsl-files",
+                include_str!("wsl_files.py"),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .creation_flags(0x0800_0000)
+            .kill_on_drop(true);
+        let mut child = command
+            .spawn()
+            .context("WSL is unavailable; install a WSL distribution")?;
+        let mut stdin = child.stdin.take().context("WSL stdin unavailable")?;
+        let write_result = stdin.write_all(&input).await;
+        drop(stdin);
+        let output = child.wait_with_output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if output.status.code() == Some(127) && stderr.contains("WSL_PYTHON_REQUIRED") {
+                bail!("WSL_PYTHON_REQUIRED: install Python 3 in the selected distribution");
+            }
+            bail!("Unavailable: WSL filesystem helper failed: {stderr}");
+        }
+        write_result.context("Writing WSL filesystem request")?;
+        let response: serde_json::Value =
+            serde_json::from_slice(&output.stdout).context("Invalid WSL filesystem response")?;
+        if response.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+            let error = &response["error"];
+            bail!(
+                "{}: {}",
+                error["code"].as_str().unwrap_or("Unavailable"),
+                error["message"]
+                    .as_str()
+                    .unwrap_or("WSL filesystem operation failed")
+            );
+        }
+        Ok(response["result"].clone())
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), operation)
+        .await
+        .context("WSL_REQUEST_TIMEOUT: filesystem request exceeded 30 seconds")?
+}
+
+#[cfg(not(target_os = "windows"))]
+#[allow(clippy::unused_async)]
+pub async fn file_request(
+    _distro: &str,
+    _request: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    wsl_unavailable()
+}
+
+/// WSL emits UTF-16LE when stdout is redirected on Windows.
+#[cfg(any(target_os = "windows", test))]
+fn decode_list_output(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.iter().skip(1).step_by(2).any(|byte| *byte == 0) {
+        let bytes = bytes.strip_prefix(&[0xff, 0xfe]).unwrap_or(bytes);
+        let words = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16_lossy(&words)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -184,7 +274,10 @@ pub fn list_distributions() -> Result<Vec<WslDistro>> {
 
     let output = cmd.output().context("running wsl --list --verbose")?;
 
-    let text = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        bail!("WSL listing failed: {}", decode_list_output(&output.stderr));
+    }
+    let text = decode_list_output(&output.stdout);
     parse_wsl_list(&text)
 }
 
@@ -209,13 +302,18 @@ pub(crate) fn parse_wsl_list(text: &str) -> Result<Vec<WslDistro>> {
         let is_default = line.starts_with('*');
         let line = line.trim_start_matches('*').trim();
 
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 {
+        let Some((prefix, version)) = line.rsplit_once(char::is_whitespace) else {
+            continue;
+        };
+        let Some((name, state)) = prefix.trim_end().rsplit_once(char::is_whitespace) else {
+            continue;
+        };
+        if let Ok(version) = version.parse::<u8>() {
             distros.push(WslDistro {
-                name: parts[0].to_string(),
+                name: name.trim_end().to_string(),
                 is_default,
-                state: parts[1].to_string(),
-                version: parts[2].parse().unwrap_or(2),
+                state: state.to_string(),
+                version,
                 os_name: None,
             });
         }
@@ -272,15 +370,6 @@ impl WslTransport {
             exit_code: output.status.code().unwrap_or(-1),
         })
     }
-
-    /// Convert a Linux path inside WSL to its `\\wsl$\` UNC path.
-    fn to_unc_path(&self, linux_path: &str) -> String {
-        format!(
-            "\\\\wsl$\\{}\\{}",
-            self.distro,
-            linux_path.trim_start_matches('/')
-        )
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -291,61 +380,60 @@ impl RemoteTransport for WslTransport {
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
-        let out = self.wsl_exec(&format!("cat {path:?}"))?;
-        if out.exit_code != 0 {
-            bail!("read_file({path}): {}", out.stderr);
-        }
-        Ok(out.stdout.into_bytes())
+        let value = file_request(
+            &self.distro,
+            &serde_json::json!({ "op": "read", "path": path }),
+        )
+        .await?;
+        Ok(serde_json::from_value(value)?)
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<()> {
-        let unc = self.to_unc_path(path);
-        tokio::fs::write(&unc, data).await?;
+        file_request(
+            &self.distro,
+            &serde_json::json!({
+                "op": "write", "path": path, "data": data, "create": true, "overwrite": true
+            }),
+        )
+        .await?;
         Ok(())
     }
 
     async fn read_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
-        let out = self.wsl_exec(&format!(
-            "find {path:?} -maxdepth 1 -mindepth 1 -printf '%f\\t%s\\t%y\\t%T@\\t%p\\n'"
-        ))?;
-        let mut entries = Vec::new();
-        for line in out.stdout.lines() {
-            let parts: Vec<&str> = line.splitn(5, '\t').collect();
-            if parts.len() == 5 {
-                let modified = parts[3].parse::<f64>().ok().and_then(|secs| {
-                    SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs_f64(secs))
-                });
-                entries.push(DirEntry {
-                    name: parts[0].to_string(),
-                    path: parts[4].to_string(),
-                    is_dir: parts[2] == "d",
-                    size: parts[1].parse().unwrap_or(0),
-                    modified,
-                });
-            }
-        }
-        Ok(entries)
+        let result = file_request(
+            &self.distro,
+            &serde_json::json!({ "op": "readdir", "path": path, "metadata": true }),
+        )
+        .await?;
+        let entries = result.as_array().context("Invalid directory listing")?;
+        Ok(entries
+            .iter()
+            .map(|entry| DirEntry {
+                name: entry["name"].as_str().unwrap_or_default().to_string(),
+                path: entry["path"].as_str().unwrap_or_default().to_string(),
+                is_dir: entry["type"].as_u64().unwrap_or(0) & 2 != 0,
+                size: entry["size"].as_u64().unwrap_or(0),
+                modified: entry["mtime"].as_u64().and_then(|ms| {
+                    SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(ms))
+                }),
+            })
+            .collect())
     }
 
     async fn stat(&self, path: &str) -> Result<FileStat> {
-        let out = self.wsl_exec(&format!("stat -c '%s %Y %F' {path:?}"))?;
-        if out.exit_code != 0 {
-            bail!("stat({path}): {}", out.stderr);
-        }
-        let parts: Vec<&str> = out.stdout.trim().splitn(3, ' ').collect();
-        if parts.len() < 3 {
-            bail!("unexpected stat output: {}", out.stdout);
-        }
-        let size = parts[0].parse().unwrap_or(0);
-        let modified = parts[1]
-            .parse::<u64>()
-            .ok()
-            .and_then(|s| SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(s)));
+        let result = file_request(
+            &self.distro,
+            &serde_json::json!({ "op": "stat", "path": path }),
+        )
+        .await?;
+        let kind = result["type"].as_u64().unwrap_or(0);
         Ok(FileStat {
-            size,
-            modified,
-            is_dir: parts[2].contains("directory"),
-            is_symlink: parts[2].contains("symbolic"),
+            size: result["size"].as_u64().unwrap_or(0),
+            modified: result["mtime"].as_u64().and_then(|ms| {
+                SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(ms))
+            }),
+            is_dir: kind & 2 != 0,
+            is_symlink: kind & 64 != 0,
         })
     }
 
@@ -445,5 +533,17 @@ mod tests {
     fn parse_wsl_list_empty() {
         let distros = parse_wsl_list("  NAME  STATE  VERSION\n").unwrap();
         assert!(distros.is_empty());
+    }
+
+    #[test]
+    fn redirected_utf16_listing_preserves_unicode_and_spaced_distribution_names() {
+        let source = "  NAME       STATE     VERSION\r\n* My Ubuntu  Running   2\r\n  Тест       Stopped   2\r\n";
+        let bytes: Vec<u8> = source.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let decoded = decode_list_output(&bytes);
+        let distros = parse_wsl_list(&decoded).unwrap();
+        assert_eq!(distros[0].name, "My Ubuntu");
+        assert!(distros[0].is_default);
+        assert_eq!(distros[1].name, "Тест");
+        assert_eq!(distros[1].version, 2);
     }
 }

@@ -4,6 +4,8 @@
  *  shell, git) runs natively in Rust. This TS file is just the bridge.
  *--------------------------------------------------------------------------------------------*/
 
+import { hasNonLocalWorkspace } from '../../../../platform/remote/common/nativeWorkspace.js';
+
 export interface ILocalToolRequest {
 	type: 'tool_request';
 	tool_call_id: string;
@@ -36,6 +38,9 @@ interface RustToolResponse {
 
 // Check if Tauri invoke is available (we're in the desktop app, not a browser)
 function getTauriInvoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
+	if (hasNonLocalWorkspace()) {
+		return null;
+	}
 	const g = globalThis as unknown as {
 		__TAURI_INVOKE__?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 		__TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };

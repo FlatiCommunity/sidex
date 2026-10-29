@@ -55,6 +55,7 @@ pub mod updater;
 pub mod validation;
 pub mod watch;
 pub mod window;
+pub mod wsl_fs;
 
 pub use chat_sessions::*;
 pub use compress::*;

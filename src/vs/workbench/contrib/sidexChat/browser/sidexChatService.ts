@@ -1,3 +1,4 @@
+import { localize } from '../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Sidex Chat Service — WebSocket client for sidex-server with full workspace context
  *--------------------------------------------------------------------------------------------*/
@@ -12,6 +13,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { isCodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { LocalToolExecutor, ILocalToolRequest, LOCAL_TOOLS_SUPPORTED } from './localToolExecutor.js';
+import { hasNonLocalWorkspace } from '../../../../platform/remote/common/nativeWorkspace.js';
 import {
 	SubagentRegistry,
 	SubagentType,
@@ -667,6 +669,14 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 	}
 
 	sendMessage(text: string): void {
+		if (hasNonLocalWorkspace()) {
+			this._setStreaming(false);
+			this._onDidReceiveChunk.fire({
+				type: 'error',
+				content: localize('sidexChat.remoteExecutionUnavailable', 'The local agent cannot execute tools in a remote workspace. Use the remote terminal for commands; local files will not be modified.')
+			} as IStreamChunk);
+			return;
+		}
 		this._enqueueUserMessage(text);
 
 		if (!this._ws || this._connectionState !== 'connected') {
@@ -1381,13 +1391,13 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 			// Handle different argument formats the server might use
 			if (Array.isArray(args.tasks)) {
 				tasks = args.tasks.map((t: { description?: string; prompt?: string; task?: string; goal?: string }) => ({
-					description: t.description || t.task || 'subtask',
+					description: t.description || t.task || localize("sidex.ui.subtask.363a99", "subtask"),
 					prompt: t.prompt || t.goal || t.description || ''
 				}));
 			} else if (args.prompt || args.task || args.goal) {
-				tasks = [{ description: args.description || 'subtask', prompt: args.prompt || args.task || args.goal }];
+				tasks = [{ description: args.description || localize("sidex.ui.subtask.363a99", "subtask"), prompt: args.prompt || args.task || args.goal }];
 			} else if (typeof args === 'string') {
-				tasks = [{ description: 'subtask', prompt: args }];
+				tasks = [{ description: localize("sidex.ui.subtask.363a99", "subtask"), prompt: args }];
 			}
 		} catch {
 			return {

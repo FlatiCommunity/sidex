@@ -46,6 +46,9 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { URI } from '../../../../base/common/uri.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { IHostService } from '../../../services/host/browser/host.js';
+import { invoke } from '@tauri-apps/api/core';
+import { WSL_SCHEME } from '../../../../platform/files/browser/wslFileSystemProvider.js';
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -170,7 +173,9 @@ registerAction2(
 					const host = payload as SshHost;
 					await remoteService.connectSsh(host.host, host.user ?? 'root', host.port ?? undefined, { kind: 'agent' });
 				}
-				// WSL / containers: fire and forget with a notification for now
+				else if (type === 'wsl') {
+					await openWslWorkspace((payload as WslDistro).name, accessor.get(IQuickInputService), accessor.get(IHostService));
+				}
 				else {
 					notifications.notify({
 						severity: Severity.Info,
@@ -233,7 +238,7 @@ registerAction2(
 				{
 					label: '$(terminal-linux) ' + localize('remote.pick.wsl', 'Connect to WSL…'),
 					description: localize('remote.pick.wslProvider', 'Remote-WSL'),
-					action: () => pickAndConnectWsl(quickInput, notifications, remoteService)
+					action: () => pickAndConnectWsl(quickInput, notifications, remoteService, accessor.get(IHostService))
 				},
 				{
 					label: '$(package) ' + localize('remote.pick.container', 'Open Folder in Container…'),
@@ -436,7 +441,8 @@ async function pickAndConnectSsh(
 async function pickAndConnectWsl(
 	quickInput: IQuickInputService,
 	notifications: INotificationService,
-	remoteService: ISideXRemoteService
+	remoteService: ISideXRemoteService,
+	host: IHostService
 ): Promise<void> {
 	const distros = await remoteService.listWslDistros();
 	if (!distros.length) {
@@ -463,11 +469,27 @@ async function pickAndConnectWsl(
 	}
 
 	try {
-		await remoteService.connectWsl(pick.distro.name);
-		notifications.info(localize('remote.wsl.connected', 'Connected to WSL: {0}', pick.distro.name));
+		await openWslWorkspace(pick.distro.name, quickInput, host);
 	} catch (err) {
 		notifications.error(localize('remote.wsl.failed', 'WSL connect failed: {0}', String(err)));
 	}
+}
+
+async function openWslWorkspace(distro: string, quickInput: IQuickInputService, host: IHostService): Promise<void> {
+	const home = await invoke<string>('wsl_file_request', { distro, request: { op: 'home' } });
+	const path = await quickInput.input({
+		value: home,
+		prompt: localize('remote.wsl.folderPrompt', 'Linux folder to open in {0}', distro),
+		validateInput: async value => value.startsWith('/') ? undefined : localize('remote.wsl.absolutePath', 'Enter an absolute Linux path, such as /home/user/project.')
+	});
+	if (!path) {
+		return;
+	}
+	const info = await invoke<{ type: number }>('wsl_file_request', { distro, request: { op: 'stat', path } });
+	if ((info.type & 2) === 0) {
+		throw new Error(localize('remote.wsl.folderRequired', 'The selected Linux path is not a folder.'));
+	}
+	await host.openWindow([{ folderUri: URI.from({ scheme: WSL_SCHEME, authority: distro, path }) }], { forceNewWindow: true });
 }
 
 async function pickAndAttachContainer(
