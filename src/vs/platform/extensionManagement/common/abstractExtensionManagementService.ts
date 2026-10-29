@@ -1060,22 +1060,20 @@ export abstract class AbstractExtensionManagementService
 				);
 			}
 		} else {
-			if ((await this.canInstall(extension)) !== true) {
-				if ((globalThis as any).__SIDEX_TAURI__ === true) {
-					// SideX has a Node.js extension host — skip platform compatibility check
-				} else {
-					const targetPlatform = await this.getTargetPlatform();
-					throw new ExtensionManagementError(
-						nls.localize(
-							'incompatible platform',
-							"The '{0}' extension is not available in {1} for the {2} platform.",
-							extension.identifier.id,
-							this.productService.nameLong,
-							TargetPlatformToString(targetPlatform)
-						),
-						ExtensionManagementErrorCode.IncompatibleTargetPlatform
-					);
-				}
+			const canInstall = await this.canInstall(extension);
+			if (canInstall !== true) {
+				// Native hosting changes platform selection, not administrator policy.
+				// Preserve the refusal reason instead of treating every refusal as a web-only limitation.
+				const allowed = this.allowedExtensionsService.isAllowed({
+					id: extension.identifier.id,
+					publisherDisplayName: extension.publisherDisplayName
+				});
+				throw new ExtensionManagementError(
+					canInstall.value,
+					allowed === true
+						? ExtensionManagementErrorCode.IncompatibleTargetPlatform
+						: ExtensionManagementErrorCode.NotAllowed
+				);
 			}
 
 			compatibleExtension = await this.getCompatibleVersion(extension, sameVersion, installPreRelease, productVersion);
@@ -1191,10 +1189,6 @@ export abstract class AbstractExtensionManagementService
 					productVersion
 				);
 			}
-		}
-
-		if (!compatibleExtension && (globalThis as any).__SIDEX_TAURI__ === true) {
-			compatibleExtension = extension;
 		}
 
 		return compatibleExtension;
