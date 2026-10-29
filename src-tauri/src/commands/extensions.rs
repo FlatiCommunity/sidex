@@ -239,6 +239,8 @@ pub async fn install_extension_from_url(
     url: String,
     expected_id: Option<String>,
 ) -> Result<InstalledExtension, String> {
+    const MAX_DOWNLOAD_BYTES: usize = 512 * 1024 * 1024;
+
     let url = rewrite_proxy_vsix_platform(&url, current_target_platform());
     let url = ensure_target_platform(&url);
     log::info!("downloading extension from {url}");
@@ -255,7 +257,6 @@ pub async fn install_extension_from_url(
     if !resp.status().is_success() {
         return Err(format!("download failed: HTTP {}", resp.status()));
     }
-    const MAX_DOWNLOAD_BYTES: usize = 512 * 1024 * 1024;
     if resp
         .content_length()
         .is_some_and(|size| size > MAX_DOWNLOAD_BYTES as u64)

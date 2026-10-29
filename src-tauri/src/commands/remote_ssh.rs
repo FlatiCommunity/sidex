@@ -110,6 +110,10 @@ fn shell_quote(value: &str) -> String {
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Preserve the named Tauri IPC parameters alongside the injected window and application state"
+)]
 pub async fn remote_ssh_terminal_spawn(
     window: Window,
     authority: String,
