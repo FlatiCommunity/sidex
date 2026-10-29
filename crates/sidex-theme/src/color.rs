@@ -16,8 +16,10 @@ pub struct Color {
 pub enum ColorParseError {
     #[error("hex color must start with '#'")]
     MissingHash,
-    #[error("hex color must be 7 (#rrggbb) or 9 (#rrggbbaa) characters, got {0}")]
+    #[error("hex color must contain 3, 4, 6, or 8 hexadecimal digits, got {0} characters")]
     InvalidLength(usize),
+    #[error("hex color contains a non-ASCII character")]
+    NonAscii,
     #[error("invalid hex digit in color string: {0}")]
     InvalidHex(#[from] std::num::ParseIntError),
 }
@@ -57,13 +59,28 @@ impl Color {
         Self { r, g, b, a }
     }
 
-    /// Parse a hex color string (`#rrggbb` or `#rrggbbaa`).
+    /// Parse VS Code/CSS hex colors: `#rgb`, `#rgba`, `#rrggbb`, or `#rrggbbaa`.
     pub fn from_hex(hex: &str) -> Result<Self, ColorParseError> {
         if !hex.starts_with('#') {
             return Err(ColorParseError::MissingHash);
         }
         let hex = &hex[1..];
+        // Validate before slicing by bytes, so malformed Unicode cannot panic.
+        if !hex.is_ascii() {
+            return Err(ColorParseError::NonAscii);
+        }
         match hex.len() {
+            3 | 4 => {
+                let r = u8::from_str_radix(&hex[0..1], 16)? * 17;
+                let g = u8::from_str_radix(&hex[1..2], 16)? * 17;
+                let b = u8::from_str_radix(&hex[2..3], 16)? * 17;
+                let a = if hex.len() == 4 {
+                    u8::from_str_radix(&hex[3..4], 16)? * 17
+                } else {
+                    255
+                };
+                Ok(Self::from_rgba(r, g, b, a))
+            }
             6 => {
                 let r = u8::from_str_radix(&hex[0..2], 16)?;
                 let g = u8::from_str_radix(&hex[2..4], 16)?;
@@ -211,7 +228,27 @@ mod tests {
 
     #[test]
     fn parse_hex_bad_length() {
-        assert!(Color::from_hex("#1a2b").is_err());
+        assert!(Color::from_hex("#1a2b3").is_err());
+    }
+
+    #[test]
+    fn parse_short_css_colors() {
+        assert_eq!(
+            Color::from_hex("#f0A").unwrap(),
+            Color::from_rgb(255, 0, 170)
+        );
+        assert_eq!(
+            Color::from_hex("#1234").unwrap(),
+            Color::from_rgba(17, 34, 51, 68)
+        );
+        assert!(Color::from_hex("#z01").is_err());
+    }
+
+    #[test]
+    fn unicode_color_input_does_not_panic() {
+        for value in ["#☃123", "#a☃12", "#é1234", "#你好"] {
+            assert!(Color::from_hex(value).is_err());
+        }
     }
 
     #[test]
