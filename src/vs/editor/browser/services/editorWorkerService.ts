@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import bundledWorkerUrl from '../../common/services/editorWebWorkerMain.ts?worker&url';
 import { timeout } from '../../../base/common/async.js';
 import { Disposable, IDisposable } from '../../../base/common/lifecycle.js';
 import { URI } from '../../../base/common/uri.js';
@@ -64,7 +65,7 @@ export class EditorWorkerService extends Disposable implements IEditorWorkerServ
 
 	public static readonly workerDescriptor = new WebWorkerDescriptor({
 		esmModuleLocation: () => FileAccess.asBrowserUri('vs/editor/common/services/editorWebWorkerMain.js'),
-		esmModuleLocationBundler: new URL('../../common/services/editorWebWorkerMain.ts', import.meta.url),
+		esmModuleLocationBundler: new URL(bundledWorkerUrl, import.meta.url),
 		label: 'editorWorkerService'
 	});
 

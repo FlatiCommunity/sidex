@@ -7,10 +7,9 @@ interface NlsEntry {
 	message: string;
 }
 
-export function nlsPlugin(): Plugin {
+export function nlsPlugin(options: { emitCatalog?: boolean } = {}): Plugin {
 	const entries: NlsEntry[] = [];
 	const dedupIndex = new Map<string, number>();
-	let isBuild = false;
 
 	function getOrAddIndex(module: string, key: string, message: string): number {
 		const identity = `${module}\0${key}\0${message}`;
@@ -41,9 +40,6 @@ export function nlsPlugin(): Plugin {
 	return {
 		name: 'vite-plugin-nls',
 		enforce: 'pre',
-		config(_config, environment) {
-			isBuild = environment.command === 'build';
-		},
 		configureServer(server) {
 			server.middlewares.use('/nls.messages.json', (_request, response) => {
 				response.setHeader('Content-Type', 'application/json');
@@ -55,9 +51,8 @@ export function nlsPlugin(): Plugin {
 			// Vite can reuse a plugin instance for watch/rebuild. Old indices must not leak into a new build.
 			entries.length = 0;
 			dedupIndex.clear();
-			if (!isBuild) {
-				for (const entry of collectNlsEntries()) getOrAddIndex(entry.module, entry.key, entry.message);
-			}
+			// Main-window and independently bundled workers must agree on every index.
+			for (const entry of collectNlsEntries()) getOrAddIndex(entry.module, entry.key, entry.message);
 		},
 		transform(code, id) {
 			const filename = id.split('?')[0].replace(/\\/g, '/');
@@ -74,7 +69,9 @@ export function nlsPlugin(): Plugin {
 			return { code: output + code.slice(cursor), map: null };
 		},
 		generateBundle() {
-			this.emitFile({ type: 'asset', fileName: 'nls.messages.json', source: serializeEntries() });
+			if (options.emitCatalog !== false) {
+				this.emitFile({ type: 'asset', fileName: 'nls.messages.json', source: serializeEntries() });
+			}
 		}
 	};
 }

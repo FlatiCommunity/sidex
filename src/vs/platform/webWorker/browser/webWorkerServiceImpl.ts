@@ -52,21 +52,6 @@ export class WebWorkerService implements IWebWorkerService {
 	}
 
 	getWorkerUrl(descriptor: WebWorkerDescriptor): string {
-		const isTauriProduction =
-			(globalThis as typeof globalThis & { __SIDEX_TAURI__?: boolean }).__SIDEX_TAURI__ === true &&
-			globalThis.location?.protocol === 'tauri:';
-		if (isTauriProduction) {
-			if (descriptor.label === 'editorWorkerService') {
-				return `${globalThis.location.origin}/assets/editorWorker.js`;
-			}
-			if (descriptor.label === 'TextMateWorker') {
-				return `${globalThis.location.origin}/assets/textMateWorker.js`;
-			}
-			if (descriptor.label === 'extensionHostWorkerMain') {
-				return `${globalThis.location.origin}/assets/extensionHostWorker.js`;
-			}
-		}
-
 		// Prefer bundler location for Vite/Webpack compatibility
 		if (descriptor.esmModuleLocationBundler) {
 			const url =
@@ -123,27 +108,19 @@ function getWorkerBootstrapUrl(
 	workerScriptUrl: string,
 	workerLoadingFailedErrorMessage: string | undefined
 ): string {
+	const workerUrl = new URL(workerScriptUrl);
 	if (
-		/^((http:)|(https:)|(file:))/.test(workerScriptUrl) &&
-		workerScriptUrl.substring(0, globalThis.origin.length) !== globalThis.origin
+		['http:', 'https:', 'file:'].includes(workerUrl.protocol) &&
+		workerUrl.origin !== globalThis.origin
 	) {
 		// this is the cross-origin case
 		// i.e. the webpage is running at a different origin than where the scripts are loaded from
 	} else {
-		const start = workerScriptUrl.lastIndexOf('?');
-		const end = workerScriptUrl.lastIndexOf('#', start);
-		const params =
-			start > 0
-				? new URLSearchParams(workerScriptUrl.substring(start + 1, ~end ? end : undefined))
-				: new URLSearchParams();
-
-		COI.addSearchParam(params, true, true);
-		const search = params.toString();
-		if (!search) {
-			workerScriptUrl = `${workerScriptUrl}#${label}`;
-		} else {
-			workerScriptUrl = `${workerScriptUrl}?${params.toString()}#${label}`;
-		}
+		// Vite's development worker URL already contains ?worker_file&type=module.
+		// Update that query in place rather than appending a second question mark.
+		COI.addSearchParam(workerUrl.searchParams, true, true);
+		workerUrl.hash = label;
+		workerScriptUrl = workerUrl.toString();
 	}
 
 	// In below blob code, we are using JSON.stringify to ensure the passed

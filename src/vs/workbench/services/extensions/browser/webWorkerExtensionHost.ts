@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import bundledWorkerUrl from '../../../api/worker/extensionHostWorkerMain.ts?worker&url';
 import * as dom from '../../../../base/browser/dom.js';
 import { parentOriginHash } from '../../../../base/browser/iframe.js';
 import { mainWindow } from '../../../../base/browser/window.js';
@@ -360,5 +361,5 @@ export class WebWorkerExtensionHost extends Disposable implements IExtensionHost
 const extensionHostWorkerMainDescriptor = new WebWorkerDescriptor({
 	label: 'extensionHostWorkerMain',
 	esmModuleLocation: () => FileAccess.asBrowserUri('vs/workbench/api/worker/extensionHostWorkerMain.js'),
-	esmModuleLocationBundler: () => new URL('../../../api/worker/extensionHostWorkerMain.ts', import.meta.url),
+	esmModuleLocationBundler: () => new URL(bundledWorkerUrl, import.meta.url),
 });

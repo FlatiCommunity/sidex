@@ -1,3 +1,4 @@
+import { generateUuid } from '../../../../../../base/common/uuid.js';
 import { Component, DOM, $ } from '../base.js';
 import { Emitter, Event } from '../../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../../base/common/lifecycle.js';
@@ -744,6 +745,11 @@ export class ChatInput extends Component {
 		// Keyboard events — handle mention popup navigation before normal input handling
 		this.on(this._textareaEl, 'keydown', e => {
 			const ke = e as KeyboardEvent;
+			// Enter confirms the current IME candidate before it can submit a message.
+			// Older WebKit reports composition through keyCode rather than isComposing.
+			if (ke.isComposing || ke.keyCode === 229) {
+				return;
+			}
 
 			if (this._mentionPopup.isVisible) {
 				if (ke.key === 'ArrowDown') {
@@ -756,7 +762,7 @@ export class ChatInput extends Component {
 					this._mentionPopup.selectPrevious();
 					return;
 				}
-				if (ke.key === 'Enter' || ke.key === 'Tab') {
+				if ((ke.key === 'Enter' && !ke.shiftKey) || ke.key === 'Tab') {
 					ke.preventDefault();
 					this._mentionPopup.confirmSelection();
 					return;
@@ -1376,7 +1382,7 @@ export class ChatInput extends Component {
 			const assetsDir = `${home}/.sidex/projects/${this._workspaceSlug(workspace)}/assets`;
 			await invoke('mkdir', { path: assetsDir, recursive: true });
 			const sourceName = file.name || `dropped-${Date.now()}`;
-			const assetPath = `${assetsDir}/${crypto.randomUUID()}${this._extension(sourceName)}`;
+			const assetPath = `${assetsDir}/${generateUuid()}${this._extension(sourceName)}`;
 			const content = Array.from(new Uint8Array(await file.arrayBuffer()));
 			await invoke('write_file_bytes', { path: assetPath, content });
 			return {
@@ -1461,7 +1467,7 @@ export class ChatInput extends Component {
 			const assetsDir = `${home}/.sidex/projects/${this._workspaceSlug(workspace)}/assets`;
 			await invoke('mkdir', { path: assetsDir, recursive: true });
 
-			const assetPath = `${assetsDir}/${crypto.randomUUID()}${this._extension(sourcePath)}`;
+			const assetPath = `${assetsDir}/${generateUuid()}${this._extension(sourcePath)}`;
 			const bytes = await invoke('read_file_bytes', { path: sourcePath });
 			await invoke('write_file_bytes', { path: assetPath, content: bytes });
 			return assetPath;

@@ -109,8 +109,10 @@ jobs:
         run: npm ci
 
       - name: Setup built-in extensions
-        shell: bash
-        run: bash scripts/setup-extensions.sh
+        run: npm run setup
+
+      - name: Stage verified Node.js runtime
+        run: npm run stage:download-runtime -- ${{ matrix.target }}
 
       - name: Install create-dmg
         if: runner.os == 'macOS'
@@ -126,7 +128,7 @@ jobs:
 
       - name: Build Tauri app
         timeout-minutes: 40
-        run: npx tauri build --target ${{ matrix.target }}
+        run: npm run tauri -- build --target ${{ matrix.target }}
 
       - name: Upload bundled artifacts
         uses: actions/upload-artifact@v4

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import bundledWorkerUrl from './worker/textMateTokenizationWorker.workerMain.ts?worker&url';
 import { canASAR } from '../../../../../amdX.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import {
@@ -189,7 +190,7 @@ export class ThreadedBackgroundTokenizerFactory implements IDisposable {
 				esmModuleLocation: FileAccess.asBrowserUri(
 					'vs/workbench/services/textMate/browser/backgroundTokenization/worker/textMateTokenizationWorker.workerMain.js'
 				),
-				esmModuleLocationBundler: new URL('./worker/textMateTokenizationWorker.workerMain.ts', import.meta.url),
+				esmModuleLocationBundler: new URL(bundledWorkerUrl, import.meta.url),
 				label: 'TextMateWorker'
 			})
 		));

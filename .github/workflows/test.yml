@@ -10,6 +10,13 @@ on:
       - "sidex-extension-sdk/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "src/**"
+      - "scripts/**"
+      - "locales/**"
+      - "public/extensions/**"
+      - "public/locales/**"
+      - "package.json"
+      - "package-lock.json"
   pull_request:
     branches: [main]
     paths:
@@ -19,6 +26,13 @@ on:
       - "sidex-extension-sdk/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "src/**"
+      - "scripts/**"
+      - "locales/**"
+      - "public/extensions/**"
+      - "public/locales/**"
+      - "package.json"
+      - "package-lock.json"
 
 env:
   RUST_BACKTRACE: 1
@@ -29,6 +43,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  frontend:
+    name: Frontend and localization
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+
   rust-test:
     name: cargo test (${{ matrix.os }})
     strategy:

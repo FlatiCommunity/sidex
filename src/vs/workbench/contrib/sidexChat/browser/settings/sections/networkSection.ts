@@ -280,13 +280,17 @@ export class NetworkSection implements SettingsSection {
 
 		const testDomain = async (domain: string): Promise<{ domain: string; ok: boolean; latencyMs?: number }> => {
 			const start = performance.now();
+			const controller = new AbortController();
+			const timer = setTimeout(() => controller.abort(), 5000);
 			try {
-				await fetch(`https://${domain}`, { method: 'HEAD', mode: 'no-cors', signal: AbortSignal.timeout(5000) });
+				await fetch(`https://${domain}`, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
 				const latencyMs = Math.round(performance.now() - start);
 				return { domain, ok: true, latencyMs };
 			} catch {
 				const latencyMs = Math.round(performance.now() - start);
 				return { domain, ok: false, latencyMs: latencyMs < 5000 ? latencyMs : undefined };
+			} finally {
+				clearTimeout(timer);
 			}
 		};
 
@@ -294,17 +298,21 @@ export class NetworkSection implements SettingsSection {
 		// the port Rust actually bound rather than a DNS name like the rest.
 		const testLocalServer = async (): Promise<{ domain: string; ok: boolean; latencyMs?: number }> => {
 			const start = performance.now();
+			const controller = new AbortController();
+			const timer = setTimeout(() => controller.abort(), 5000);
 			try {
 				const endpoint = await resolveServerEndpoint();
 				if (!endpoint.running) {
 					return { domain: localize('sidex.network.localAgent', 'Local agent server (loopback)'), ok: false };
 				}
-				const response = await fetch(`${endpoint.httpUrl}/v1/health`, { signal: AbortSignal.timeout(5000) });
+				const response = await fetch(`${endpoint.httpUrl}/v1/health`, { signal: controller.signal });
 				if (!response.ok) throw new Error(`HTTP ${response.status}`);
 				const latencyMs = Math.round(performance.now() - start);
 				return { domain: localize('sidex.network.localAgent', 'Local agent server (loopback)'), ok: true, latencyMs };
 			} catch {
 				return { domain: localize('sidex.network.localAgent', 'Local agent server (loopback)'), ok: false };
+			} finally {
+				clearTimeout(timer);
 			}
 		};
 
