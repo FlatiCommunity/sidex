@@ -25,26 +25,30 @@ const TOOL_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => strin
 	str_replace_editor: a => localize('sidex.chat.toolEdited', 'Edited {0}', fileName(a['path'])),
 	delete_file: a => localize('sidex.chat.toolDeleted', 'Deleted {0}', fileName(a['path'])),
 	shell: a => localize('sidex.chat.toolRan', 'Ran {0}', `\`${shortCmd(a['command'])}\``),
-	grep: a => localize('sidex.chat.toolSearchedFor', 'Searched for "{0}"', a['pattern'] || ''),
-	glob: a => localize('sidex.chat.toolFoundMatching', 'Found files matching "{0}"', a['pattern'] || a['glob'] || ''),
-	search_files: a => localize('sidex.chat.toolSearchedFor', 'Searched files for "{0}"', a['pattern'] || ''),
+	grep: a => localize('sidex.chat.toolSearchedFor', 'Searched for "{0}"', stringArg(a['pattern'])),
+	glob: a => localize('sidex.chat.toolFoundMatching', 'Found files matching "{0}"', stringArg(a['pattern']) || stringArg(a['glob'])),
+	search_files: a => localize('sidex.chat.toolSearchedFilesFor', 'Searched files for "{0}"', stringArg(a['pattern'])),
 	git_status: () => localize('sidex.chat.toolGitStatus', 'Checked git status'),
 	git_log: () => localize('sidex.chat.toolGitLog', 'Viewed git log'),
 	git_diff_file: a => localize('sidex.chat.toolDiffed', 'Diffed {0}', fileName(a['path'])),
-	git_commit: a => localize('sidex.chat.toolCommitted', 'Committed: {0}', a['message'] || ''),
-	list_dir: a => localize('sidex.chat.toolListed', 'Listed {0}', a['path'] || '.'),
-	tree: a => localize('sidex.chat.toolListed', 'Listed tree of {0}', a['path'] || '.'),
+	git_commit: a => localize('sidex.chat.toolCommitted', 'Committed: {0}', stringArg(a['message'])),
+	list_dir: a => localize('sidex.chat.toolListed', 'Listed {0}', stringArg(a['path']) || '.'),
+	tree: a => localize('sidex.chat.toolListedTree', 'Listed tree of {0}', stringArg(a['path']) || '.'),
 	batch_read: () => localize('sidex.chat.toolReadMultiple', 'Read multiple files'),
 	lsp_hover: a => localize('sidex.chat.toolInspectedSymbol', 'Inspected symbol in {0}', fileName(a['path'])),
 	lsp_definition: a => localize('sidex.chat.toolFoundDefinition', 'Found definition in {0}', fileName(a['path'])),
 	lsp_references: a => localize('sidex.chat.toolFoundReferences', 'Found references in {0}', fileName(a['path']))
 };
 
+function stringArg(value: unknown): string {
+	return typeof value === 'string' ? value : '';
+}
+
 function fileName(path: unknown): string {
 	if (typeof path !== 'string' || !path) {
 		return localize('sidex.chat.toolFile', 'file');
 	}
-	const segments = path.split('/');
+	const segments = path.split(/[\\/]/);
 	return segments.pop() || path;
 }
 

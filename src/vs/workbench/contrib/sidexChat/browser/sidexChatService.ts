@@ -2443,7 +2443,7 @@ ${prompt}`,
 					const id = typeof entry === 'string' ? entry : entry?.id;
 					if (id && !models.find(m => m.id === id)) {
 						const name = typeof entry === 'object' && entry?.name ? entry.name : id;
-						models = [...models, { id, name, provider: 'custom' }];
+						models = [...models, { id, name, provider: 'custom', contextWindow: contextWindowForModel(id) }];
 					}
 				}
 			}

@@ -159,7 +159,7 @@ export function showConfirmDialog(options: IConfirmDialogOptions): Promise<boole
 		// Theme color tokens live on `.monaco-workbench`, not on `body`.
 		// Mounting on body leaves `--vscode-editorWidget-background` unset, so
 		// the card paints transparent and settings text shows through.
-		const host = document.querySelector('.monaco-workbench') ?? document.body;
+		const host = document.querySelector<HTMLElement>('.monaco-workbench') ?? document.body;
 		dialog.appendTo(host);
 		// Deferred a frame so the element has layout before it (or anything in it) can take focus.
 		requestAnimationFrame(() => dialog.focusDefault());

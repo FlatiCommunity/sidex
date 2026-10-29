@@ -2,6 +2,7 @@ import type { SettingsSection } from '../sidexSettingsPanel.js';
 import { restartServer } from '../../localServer.js';
 import { showConfirmDialog } from '../../components/confirmDialog.js';
 import { createProductMark, productMarkKind } from '../productMarks.js';
+import { createCustomDropdown, type DropdownOption } from '../sidexSettingsStyles.js';
 import { localize } from '../../../../../../nls.js';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
