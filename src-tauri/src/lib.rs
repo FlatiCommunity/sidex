@@ -1,4 +1,5 @@
 mod app_dirs;
+mod cli;
 mod commands;
 #[allow(dead_code)]
 mod server;
@@ -28,6 +29,17 @@ use tauri::Manager;
 #[cfg(target_os = "macos")]
 #[allow(clippy::too_many_lines)]
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    // Native edit/application actions need their predefined behavior, but Tauri
+    // allocates runtime IDs. Retain semantic aliases for display-language packs.
+    let mut predefined_ids: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut native = |key: &str, item: PredefinedMenuItem<tauri::Wry>| {
+        predefined_ids
+            .entry(key.to_string())
+            .or_default()
+            .push(item.id().0.clone());
+        item
+    };
     let file_menu = SubmenuBuilder::with_id(app, "file_menu", "File")
         .item(
             &MenuItemBuilder::with_id("new_file", "New File")
@@ -77,12 +89,12 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()?;
 
     let edit_menu = SubmenuBuilder::with_id(app, "edit_menu", "Edit")
-        .item(&PredefinedMenuItem::undo(app, None)?)
-        .item(&PredefinedMenuItem::redo(app, None)?)
+        .item(&native("undo", PredefinedMenuItem::undo(app, None)?))
+        .item(&native("redo", PredefinedMenuItem::redo(app, None)?))
         .separator()
-        .item(&PredefinedMenuItem::cut(app, None)?)
-        .item(&PredefinedMenuItem::copy(app, None)?)
-        .item(&PredefinedMenuItem::paste(app, None)?)
+        .item(&native("cut", PredefinedMenuItem::cut(app, None)?))
+        .item(&native("copy", PredefinedMenuItem::copy(app, None)?))
+        .item(&native("paste", PredefinedMenuItem::paste(app, None)?))
         .separator()
         .item(
             &MenuItemBuilder::with_id("find", "Find")
@@ -108,7 +120,10 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()?;
 
     let selection_menu = SubmenuBuilder::with_id(app, "selection_menu", "Selection")
-        .item(&PredefinedMenuItem::select_all(app, None)?)
+        .item(&native(
+            "select_all",
+            PredefinedMenuItem::select_all(app, None)?,
+        ))
         .item(
             &MenuItemBuilder::with_id("expand_selection", "Expand Selection")
                 .accelerator("CmdOrCtrl+Shift+Right")
@@ -325,12 +340,21 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build(app)?;
 
     let window_menu = SubmenuBuilder::with_id(app, tauri::menu::WINDOW_SUBMENU_ID, "Window")
-        .item(&PredefinedMenuItem::minimize(app, None)?)
-        .item(&PredefinedMenuItem::maximize(app, None)?)
+        .item(&native(
+            "minimize",
+            PredefinedMenuItem::minimize(app, None)?,
+        ))
+        .item(&native(
+            "maximize",
+            PredefinedMenuItem::maximize(app, None)?,
+        ))
         .item(&PredefinedMenuItem::separator(app)?)
         .item(&cycle_windows_item)
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&PredefinedMenuItem::close_window(app, None)?)
+        .item(&native(
+            "close_window",
+            PredefinedMenuItem::close_window(app, None)?,
+        ))
         .build()?;
 
     let help_menu = SubmenuBuilder::with_id(app, "help_menu", "Help")
@@ -348,15 +372,27 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()?;
 
     let sidex_menu = SubmenuBuilder::with_id(app, "sidex_menu", "SideX")
-        .item(&PredefinedMenuItem::about(app, Some("About SideX"), None)?)
+        .item(&native(
+            "about",
+            PredefinedMenuItem::about(app, Some("About SideX"), None)?,
+        ))
         .separator()
-        .item(&PredefinedMenuItem::services(app, None)?)
+        .item(&native(
+            "services",
+            PredefinedMenuItem::services(app, None)?,
+        ))
         .separator()
-        .item(&PredefinedMenuItem::hide(app, None)?)
-        .item(&PredefinedMenuItem::hide_others(app, None)?)
-        .item(&PredefinedMenuItem::show_all(app, None)?)
+        .item(&native("hide", PredefinedMenuItem::hide(app, None)?))
+        .item(&native(
+            "hide_others",
+            PredefinedMenuItem::hide_others(app, None)?,
+        ))
+        .item(&native(
+            "show_all",
+            PredefinedMenuItem::show_all(app, None)?,
+        ))
         .separator()
-        .item(&PredefinedMenuItem::quit(app, None)?)
+        .item(&native("quit", PredefinedMenuItem::quit(app, None)?))
         .build()?;
 
     let menu = Menu::with_items(
@@ -375,6 +411,11 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         ],
     )?;
 
+    predefined_ids.insert(
+        "window_menu".to_string(),
+        vec![tauri::menu::WINDOW_SUBMENU_ID.to_string()],
+    );
+    app.manage(commands::menu::NativeMenuIds(predefined_ids));
     Ok(menu)
 }
 
@@ -441,6 +482,30 @@ fn fix_macos_path() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[allow(clippy::too_many_lines)]
 pub fn run() {
+    // Apply before GTK/WebKit is initialized, including library/mobile entry
+    // points. An explicit user setting always wins over the compatibility default.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let launch = match cli::parse(std::env::args_os().skip(1), &cwd) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
+    if launch.help {
+        println!("{}", cli::HELP);
+        return;
+    }
+    if launch.version {
+        println!("SideX {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     // Inherit the user's login-shell PATH before anything (terminals, git,
     // LSP servers, extension hosts) is spawned.
     #[cfg(target_os = "macos")]
@@ -464,9 +529,11 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(AuthState::new())
+        .manage(commands::window::StartupTargets(std::sync::Mutex::new(launch.targets)))
         .manage(UpdateManagerState::new())
         .manage(Arc::new(commands::extensions::MarketplaceClientState::new()))
         .manage(Arc::new(TerminalStore::new()))
@@ -647,13 +714,6 @@ pub fn run() {
                 app.set_menu(menu)?;
             }
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
 
             #[allow(unexpected_cfgs)]
             {
@@ -798,6 +858,7 @@ pub fn run() {
             commands::search_files,
             commands::search_text,
             commands::create_window,
+            commands::window::take_startup_targets,
             commands::close_window,
             commands::set_window_title,
             commands::get_monitors,
@@ -840,6 +901,7 @@ pub fn run() {
             commands::settings_load,
             commands::settings_parse_jsonc,
             commands::settings_modify_jsonc,
+            commands::git::git_repository_root,
             commands::git_status,
             commands::git_diff,
             commands::git_log,
@@ -932,6 +994,8 @@ pub fn run() {
             commands::watch_is_active,
             // Extensions
             commands::install_extension,
+            commands::extensions::extension_get_target_platform,
+            commands::extensions::read_vsix_manifest,
             commands::install_extension_from_url,
             commands::uninstall_extension,
             commands::list_installed_extensions,

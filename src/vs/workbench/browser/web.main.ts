@@ -205,7 +205,7 @@ export class BrowserMain extends Disposable {
 				}
 				(async () => {
 					const files: URI[] = [];
-					const folders: URI[] = [];
+					const workspaces: Array<{ folderUri: URI } | { workspaceUri: URI }> = [];
 					for (const path of paths) {
 						if (typeof path !== 'string' || path.length === 0) {
 							continue;
@@ -213,7 +213,13 @@ export class BrowserMain extends Disposable {
 						const resource = URI.file(path);
 						try {
 							const stat = await fileService.stat(resource);
-							(stat.isDirectory ? folders : files).push(resource);
+							if (stat.isDirectory) {
+								workspaces.push({ folderUri: resource });
+							} else if (resource.path.endsWith('.code-workspace')) {
+								workspaces.push({ workspaceUri: resource });
+							} else {
+								files.push(resource);
+							}
 						} catch {
 							// Ignore paths that cannot be resolved
 						}
@@ -221,9 +227,9 @@ export class BrowserMain extends Disposable {
 					if (files.length > 0) {
 						await editorService.openEditors(files.map(resource => ({ resource, options: { pinned: true } })));
 					}
-					if (folders.length > 0) {
+					if (workspaces.length > 0) {
 						// Opens via the workspace provider (same path as the Open Folder menu action)
-						await hostService.openWindow([{ folderUri: folders[0] }]);
+						await hostService.openWindow(workspaces);
 					}
 				})().catch(err => services.logService.error('[SideX] Failed to open dropped paths:', err));
 			}) as EventListener);

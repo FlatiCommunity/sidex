@@ -1,8 +1,74 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use super::storage::StorageDb;
+use crate::cli::{OpenTarget, TargetKind};
+
+pub struct StartupTargets(pub Mutex<Vec<OpenTarget>>);
+
+#[derive(Serialize)]
+pub struct StartupTarget {
+    path: String,
+    kind: &'static str,
+    line: Option<u32>,
+    column: Option<u32>,
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn take_startup_targets(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, StartupTargets>,
+) -> Result<Vec<StartupTarget>, String> {
+    // Secondary windows have their own URL, and must never replay process args.
+    if window.label() != "main" {
+        return Ok(Vec::new());
+    }
+    let targets = std::mem::take(&mut *state.0.lock().map_err(|e| e.to_string())?);
+    Ok(targets
+        .into_iter()
+        .map(|target| StartupTarget {
+            path: target.path.to_string_lossy().into_owned(),
+            kind: match target.kind {
+                TargetKind::File => "file",
+                TargetKind::Folder => "folder",
+                TargetKind::Workspace => "workspace",
+            },
+            line: target.line,
+            column: target.column,
+        })
+        .collect())
+}
+
+fn workbench_path(requested: Option<&str>, current: &url::Url) -> Result<PathBuf, String> {
+    let Some(requested) = requested else {
+        return Ok(PathBuf::from("index.html"));
+    };
+    let target = current
+        .join(requested)
+        .map_err(|e| format!("Invalid window URL: {e}"))?;
+    if target.scheme() != current.scheme()
+        || target.host_str() != current.host_str()
+        || target.port_or_known_default() != current.port_or_known_default()
+        || !target.username().is_empty()
+        || target.password().is_some()
+        || !matches!(target.path(), "/" | "/index.html")
+    {
+        return Err("New editor windows must use the local workbench URL".to_string());
+    }
+    let mut path = String::from("index.html");
+    if let Some(query) = target.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    if let Some(fragment) = target.fragment() {
+        path.push('#');
+        path.push_str(fragment);
+    }
+    Ok(PathBuf::from(path))
+}
 
 #[derive(Debug, Serialize)]
 pub struct MonitorInfo {
@@ -16,20 +82,32 @@ pub struct MonitorInfo {
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
-pub fn create_window(
+pub async fn create_window(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     label: String,
     title: String,
     url: Option<String>,
 ) -> Result<(), String> {
-    let webview_url = match url {
-        Some(u) => WebviewUrl::External(u.parse().map_err(|e| format!("Invalid URL: {e}"))?),
-        None => WebviewUrl::default(),
-    };
+    if !label.starts_with("sidex-") {
+        return Err("Editor window labels must start with sidex-".to_string());
+    }
+    let current = window.url().map_err(|e| e.to_string())?;
+    // App URLs preserve Tauri's local IPC origin. External pages belong in the
+    // system browser, never in a privileged editor window.
+    let webview_url = WebviewUrl::App(workbench_path(url.as_deref(), &current)?);
 
     let builder = WebviewWindowBuilder::new(&app, &label, webview_url)
         .title(&title)
-        .inner_size(1200.0, 800.0);
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(800.0, 600.0)
+        .use_https_scheme(true);
+
+    let builder = if let Some(portable) = sidex_extensions::paths::portable_data_dir() {
+        builder.data_directory(portable.join("webview"))
+    } else {
+        builder
+    };
 
     #[cfg(target_os = "macos")]
     let builder = builder
@@ -153,7 +231,7 @@ pub fn save_window_state(
         .ok_or_else(|| format!("window '{label}' not found"))?;
 
     let pos = window.outer_position().map_err(|e| e.to_string())?;
-    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let size = window.inner_size().map_err(|e| e.to_string())?;
     let maximized = window.is_maximized().unwrap_or(false);
 
     let state = WindowState {
@@ -167,4 +245,29 @@ pub fn save_window_state(
     let json = serde_json::to_string(&state).map_err(|e| e.to_string())?;
     db.set(WINDOW_STATE_KEY, &json)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_windows_preserve_queries_and_reject_external_origins() {
+        for origin in [
+            "tauri://localhost/",
+            "https://tauri.localhost/",
+            "http://localhost:1420/",
+        ] {
+            let current = url::Url::parse(origin).unwrap();
+            let path =
+                workbench_path(Some("?folder=file%3A%2F%2F%2Fwork%2Fa%20b"), &current).unwrap();
+            assert_eq!(
+                path,
+                PathBuf::from("index.html?folder=file%3A%2F%2F%2Fwork%2Fa%20b")
+            );
+            assert!(workbench_path(Some("https://example.com/"), &current).is_err());
+            assert!(workbench_path(Some("/extensions/untrusted/index.html"), &current).is_err());
+            assert!(workbench_path(Some("javascript:alert(1)"), &current).is_err());
+        }
+    }
 }

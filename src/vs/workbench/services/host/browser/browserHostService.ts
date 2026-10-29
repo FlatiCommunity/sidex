@@ -768,6 +768,11 @@ export class BrowserHostService extends Disposable implements IHostService {
 	async close(): Promise<void> {
 		await this.handleExpectedShutdown(ShutdownReason.CLOSE);
 
+		if ((globalThis as any).__SIDEX_TAURI__) {
+			const { getCurrentWindow } = await import('@tauri-apps/api/window');
+			await getCurrentWindow().close();
+			return;
+		}
 		mainWindow.close();
 	}
 

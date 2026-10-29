@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 use tauri::menu::MenuItemKind;
+use tauri::Manager;
+
+/// Stable semantic names for platform-generated predefined menu item IDs.
+pub struct NativeMenuIds(pub HashMap<String, Vec<String>>);
 
 fn set_text_on_item<R: tauri::Runtime>(item: &MenuItemKind<R>, text: &str) {
     if let Some(mi) = item.as_menuitem() {
         let _ = mi.set_text(text);
     } else if let Some(sub) = item.as_submenu() {
         let _ = sub.set_text(text);
+    } else if let Some(predefined) = item.as_predefined_menuitem() {
+        let _ = predefined.set_text(text);
     }
 }
 
@@ -43,6 +49,15 @@ pub fn update_menu_labels(
     let menu = app.menu().ok_or("no app menu set")?;
     let items = menu.items().map_err(|e| e.to_string())?;
     let mut labels = labels;
+    if let Some(ids) = app.try_state::<NativeMenuIds>() {
+        for (semantic_id, runtime_ids) in &ids.0 {
+            if let Some(text) = labels.get(semantic_id).cloned() {
+                for runtime_id in runtime_ids {
+                    labels.insert(runtime_id.clone(), text.clone());
+                }
+            }
+        }
+    }
     apply_labels(&items, &mut labels);
     Ok(())
 }

@@ -3,7 +3,7 @@
  *  Entry point. Globals set by inline script in index.html.
  *--------------------------------------------------------------------------------------------*/
 
-import { getNlsIndex, loadNlsMessages } from './nls-loader.js';
+import { loadNlsMessages } from './nls-loader.js';
 
 async function sidexOpenFolder() {
 	try {
@@ -22,6 +22,8 @@ async function sidexOpenFolder() {
 function navigateToFolder(folderUri: string) {
 	const url = new URL(window.location.href);
 	url.searchParams.set('folder', folderUri);
+	url.searchParams.delete('workspace');
+	url.searchParams.delete('payload');
 	window.location.href = url.toString();
 }
 
@@ -77,7 +79,7 @@ async function boot() {
 		console.log('[SideX] Rust bridge services initialized');
 	}
 
-	const { create } = await import('./vs/workbench/browser/web.factory.js');
+	const { create, commands, env } = await import('./vs/workbench/browser/web.factory.js');
 	const { URI } = await import('./vs/base/common/uri.js');
 
 	if (document.readyState === 'loading') {
@@ -85,15 +87,58 @@ async function boot() {
 	}
 
 	const urlParams = new URLSearchParams(window.location.search);
+	const startupTargets: Array<{ path: string; kind: string; line?: number; column?: number }> = [];
+	if ((globalThis as any).__TAURI_INTERNALS__) {
+		try {
+			const { invoke } = await import('@tauri-apps/api/core');
+			startupTargets.push(...(await invoke<typeof startupTargets>('take_startup_targets')));
+		} catch (error) {
+			console.warn('[SideX] Could not read launch arguments:', error);
+		}
+	}
+	const launchWorkspace = startupTargets.find(target => target.kind !== 'file');
+	if (!urlParams.has('folder') && !urlParams.has('workspace') && launchWorkspace) {
+		urlParams.set(launchWorkspace.kind, URI.file(launchWorkspace.path).toString());
+		const startupUrl = new URL(window.location.href);
+		startupUrl.search = urlParams.toString();
+		window.history.replaceState(null, '', startupUrl);
+	}
 	const folderParam = urlParams.get('folder');
+	const workspaceParam = urlParams.get('workspace');
+	let workspacePayload: object | undefined;
+	try {
+		const payload = JSON.parse(urlParams.get('payload') ?? 'null');
+		if (
+			Array.isArray(payload) &&
+			payload.every(
+				entry => Array.isArray(entry) && entry.length === 2 && entry.every(value => typeof value === 'string')
+			)
+		) {
+			workspacePayload = payload;
+		}
+	} catch {
+		/* Ignore malformed launch payloads. */
+	}
 
 	let workspace: any = undefined;
 	if (folderParam) {
 		const parsed = URI.parse(folderParam);
-		if (parsed.scheme === 'file' || parsed.scheme === 'vscode-remote' || parsed.scheme === 'vscode-vfs') {
+		if (['file', 'vscode-remote', 'vscode-vfs', 'sidex-wsl', 'sidex-ssh'].includes(parsed.scheme)) {
 			workspace = { folderUri: parsed };
 		}
 	}
+
+	if (workspaceParam) {
+		const parsed = URI.parse(workspaceParam);
+		if (['file', 'vscode-remote', 'vscode-vfs', 'sidex-wsl', 'sidex-ssh'].includes(parsed.scheme)) {
+			workspace = { workspaceUri: parsed };
+		}
+	}
+
+	const workspaceResource = workspace?.folderUri ?? workspace?.workspaceUri;
+	(globalThis as any).__SIDEX_WORKSPACE__ = workspaceResource
+		? { scheme: workspaceResource.scheme, authority: workspaceResource.authority, path: workspaceResource.path }
+		: undefined;
 
 	const options: any = {
 		initialColorTheme: {
@@ -117,15 +162,22 @@ async function boot() {
 		// The workspace provider tells VSCode what folder/workspace to open
 		workspaceProvider: {
 			workspace,
+			payload: workspacePayload,
 			trusted: true,
 			open: async (_workspace: any, _options: any) => {
 				const reuseWindow = _options?.reuse === true;
 				const targetUrl = new URL(window.location.href);
+				targetUrl.searchParams.delete('folder');
+				targetUrl.searchParams.delete('workspace');
+				targetUrl.searchParams.delete('payload');
+				if (_options?.payload) {
+					targetUrl.searchParams.set('payload', JSON.stringify(_options.payload));
+				}
 
 				if (_workspace && 'folderUri' in _workspace) {
 					targetUrl.searchParams.set('folder', _workspace.folderUri.toString());
 				} else if (_workspace && 'workspaceUri' in _workspace) {
-					targetUrl.searchParams.set('folder', _workspace.workspaceUri.toString());
+					targetUrl.searchParams.set('workspace', _workspace.workspaceUri.toString());
 				} else {
 					targetUrl.searchParams.delete('folder');
 				}
@@ -252,6 +304,39 @@ async function boot() {
 	setupTauriExternalOpener();
 	setupMenuActions();
 	setupWindowStateSave();
+	setupNativePathEvents();
+	for (const target of startupTargets) {
+		if (target.kind === 'file') {
+			void commands
+				.executeCommand('vscode.open', URI.file(target.path), {
+					preview: false,
+					selection: target.line ? { startLineNumber: target.line, startColumn: target.column || 1 } : undefined
+				})
+				.catch(error => console.error('[SideX] Failed to open launch file:', error));
+		} else if (target !== launchWorkspace) {
+			const destination =
+				target.kind === 'workspace' ? { workspaceUri: URI.file(target.path) } : { folderUri: URI.file(target.path) };
+			void options.workspaceProvider.open(destination, { reuse: false });
+		}
+	}
+
+	async function setupNativePathEvents() {
+		if (!(globalThis as any).__TAURI_INTERNALS__) {
+			return;
+		}
+		try {
+			const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+			const unlisten = await getCurrentWebview().onDragDropEvent(async event => {
+				if (event.payload.type === 'drop') {
+					await env.getUriScheme(); // Resolves after the workbench installs its handlers.
+					window.dispatchEvent(new CustomEvent('sidex-open-paths', { detail: { paths: event.payload.paths } }));
+				}
+			});
+			window.addEventListener('beforeunload', unlisten, { once: true });
+		} catch (error) {
+			console.warn('[SideX] Could not initialize native file drop:', error);
+		}
+	}
 	setupWindowsEditorNewlineKeybindings();
 	updateNativeMenuLabels();
 
@@ -273,21 +358,22 @@ function setupTauriExternalOpener() {
 }
 
 function setupWindowStateSave() {
-	import('@tauri-apps/api/core')
-		.then(({ invoke }) => {
+	Promise.all([import('@tauri-apps/api/core'), import('@tauri-apps/api/window')])
+		.then(([{ invoke }, { getCurrentWindow }]) => {
+			const label = getCurrentWindow().label;
 			let saveTimer: ReturnType<typeof setTimeout> | null = null;
 			const debouncedSave = () => {
 				if (saveTimer) {
 					clearTimeout(saveTimer);
 				}
 				saveTimer = setTimeout(() => {
-					invoke('save_window_state', { label: 'main' }).catch(() => {});
+					invoke('save_window_state', { label }).catch(() => {});
 				}, 500);
 			};
 
 			window.addEventListener('resize', debouncedSave);
 			window.addEventListener('beforeunload', () => {
-				invoke('save_window_state', { label: 'main' }).catch(() => {});
+				invoke('save_window_state', { label }).catch(() => {});
 			});
 		})
 		.catch(() => {});
@@ -458,100 +544,15 @@ function setupMenuActions() {
  * translated labels to the Rust side so the native macOS menu bar updates.
  */
 async function updateNativeMenuLabels() {
-	if (!navigator.userAgent.includes('Mac')) {
-		return;
-	}
-
-	const nlsMessages: string[] | undefined = (globalThis as any)._VSCODE_NLS_MESSAGES;
-	if (!nlsMessages?.length) {
-		return;
-	}
-
-	// NLS key -> native menu item ID.
-	// Submenu headers use the submenu IDs from lib.rs; individual items use
-	// the MenuItemBuilder IDs.  Keys come from menubarControl.ts / the
-	// various contribution files.
-	const nlsKeyToMenuId: Record<string, string> = {
-		// Submenu titles
-		mFile: 'file_menu',
-		mEdit: 'edit_menu',
-		mSelection: 'selection_menu',
-		mView: 'view_menu',
-		mGoto: 'go_menu',
-		mRun: 'run_menu',
-		mTerminal: 'terminal_menu',
-		mHelp: 'help_menu',
-		// File menu items
-		miNewFile: 'new_file',
-		miNewWindow: 'new_window',
-		miOpenFile: 'open_file',
-		miSave: 'save',
-		miSaveAs: 'save_as',
-		miCloseEditor: 'close_editor',
-		// Edit menu items
-		miFind: 'find',
-		miReplace: 'replace',
-		miFindInFiles: 'find_in_files',
-		miReplaceInFiles: 'replace_in_files',
-		// View menu items
-		miCommandPalette: 'command_palette',
-		miToggleFullScreen: 'toggle_fullscreen',
-		miZoomIn: 'zoom_in',
-		miZoomOut: 'zoom_out',
-		miZoomReset: 'reset_zoom',
-		// Go menu items
-		miBack: 'back',
-		miForward: 'forward',
-		miGotoFile: 'go_to_file',
-		miGotoSymbolInWorkspace: 'go_to_symbol',
-		miGotoLine: 'go_to_line',
-		miGotoDefinition: 'go_to_definition',
-		// Run menu items
-		miStartDebugging: 'start_debugging',
-		miRunWithoutDebugging: 'run_without_debugging',
-		miStopDebugging: 'stop_debugging',
-		miRestartDebugging: 'restart_debugging',
-		miToggleBreakpoint: 'toggle_breakpoint',
-		// Terminal menu items
-		miNewTerminal: 'new_terminal',
-		miSplitTerminal: 'split_terminal',
-		miRunTask: 'run_task',
-		miRunBuildTask: 'run_build_task',
-		// Help menu items
-		miWelcome: 'welcome',
-		miDocumentation: 'documentation',
-		miReleaseNotes: 'release_notes',
-		miKeyboardShortcuts: 'keyboard_shortcuts',
-		miReportIssue: 'report_issue'
-	};
-
+	if (!(globalThis as any).__SIDEX_TAURI__) return;
 	try {
-		const nlsIndex = await getNlsIndex();
-		if (!nlsIndex) {
-			return;
-		}
-
-		const labels: Record<string, string> = {};
-
-		for (let i = 0; i < nlsIndex.messages.length; i++) {
-			const [, key, message] = nlsIndex.messages[i];
-			const menuId = nlsKeyToMenuId[key];
-			if (menuId) {
-				const translated = nlsMessages[i];
-				if (typeof translated === 'string' && translated !== message) {
-					labels[menuId] = translated.replace(/&&/g, '').replace(/&/g, '');
-				}
-			}
-		}
-
-		if (Object.keys(labels).length === 0) {
-			return;
-		}
-
-		const { invoke } = await import('@tauri-apps/api/core');
-		await invoke('update_menu_labels', { labels });
-	} catch (e) {
-		console.warn('[SideX] Could not update native menu labels:', e);
+		const [{ getNativeMenuLabels }, { invoke }] = await Promise.all([
+			import('./vs/platform/sidex/common/nativeMenuLocalization.js'),
+			import('@tauri-apps/api/core')
+		]);
+		await invoke('update_menu_labels', { labels: getNativeMenuLabels() });
+	} catch (error) {
+		console.warn('[SideX] Could not update native menu labels:', error);
 	}
 }
 
