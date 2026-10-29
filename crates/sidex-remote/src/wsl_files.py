@@ -135,7 +135,9 @@ def handle(request):
         return None
     if operation == "snapshot":
         return snapshot(request, path)
-    if operation in ("delete", "rename") and os.path.normpath(path) == "/":
+    if operation in ("delete", "rename") and (
+        os.path.normpath(path) == "/" or (not os.path.islink(path) and os.path.realpath(path) == "/")
+    ):
         raise PermissionError(errno.EPERM, "Cannot remove or rename the distribution root")
     if operation == "delete":
         if os.path.isdir(path) and not os.path.islink(path):
@@ -148,6 +150,8 @@ def handle(request):
         return None
     if operation == "rename":
         target = path_arg(request, "target")
+        if os.path.normpath(target) == "/" or (not os.path.islink(target) and os.path.realpath(target) == "/"):
+            raise PermissionError(errno.EPERM, "Cannot replace the distribution root")
         if os.path.lexists(target) and not request.get("overwrite", False):
             raise FileExistsError(errno.EEXIST, "Rename target exists", target)
         os.replace(path, target)

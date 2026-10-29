@@ -82,6 +82,13 @@ class WslFilesystemTests(unittest.TestCase):
         self.assertTrue((sub / "keep").exists())
         with self.assertRaises(PermissionError):
             self.request("delete", "/", recursive=True)
+        root_link = self.root / "root_link"
+        root_link.symlink_to("/", target_is_directory=True)
+        with self.assertRaises(PermissionError):
+            self.request("delete", str(root_link) + "/.", recursive=True)
+        with self.assertRaises(PermissionError):
+            self.request("rename", target, target=str(root_link) + "/.", overwrite=True)
+        self.assertTrue(target.exists())
 
     def test_snapshot_observes_external_changes_and_applies_exclusions(self):
         sub = self.root / "nested"
