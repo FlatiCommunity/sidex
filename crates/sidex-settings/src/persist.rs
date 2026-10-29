@@ -107,7 +107,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn atomic_updates_preserve_symlinks_and_the_targets_permissions() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
+        use std::os::unix::fs::{symlink, PermissionsExt};
 
         let directory = test_directory();
         let dotfiles = directory.join("dotfiles");

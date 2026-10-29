@@ -132,7 +132,9 @@ libc = "0.2"
 # Delegate file selection to the active desktop portal (KDE, GNOME, Flatpak).
 # rfd's default GTK backend otherwise forces the GTK picker on every Linux desktop.
 [target.'cfg(target_os = "linux")'.dependencies]
-tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
+tauri-plugin-dialog = { version = "2", default-features = false, features = [
+  "xdg-portal",
+] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tauri-plugin-dialog = "2"

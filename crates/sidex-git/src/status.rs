@@ -41,7 +41,7 @@ fn parse_status(output: &str) -> Vec<StatusEntry> {
     let mut records = output.split('\0');
     while let Some(record) = records.next() {
         let kind = record.as_bytes().first();
-        if matches!(kind, Some(b'?') | Some(b'!')) {
+        if matches!(kind, Some(b'?' | b'!')) {
             entries.push(StatusEntry {
                 path: record.get(2..).unwrap_or_default().to_owned(),
                 original_path: None,
