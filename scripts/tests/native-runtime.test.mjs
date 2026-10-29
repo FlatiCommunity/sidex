@@ -235,3 +235,50 @@ test('project rules and chat diff reverts cannot invoke local writes from a virt
 		globalThis.__TAURI_INVOKE__ = previousInvoke;
 	}
 });
+
+test('rules and skills use native directory arrays, absolute edit paths, and the write_file content argument', async () => {
+	const previous = globalThis.__SIDEX_WORKSPACE_FOLDERS__;
+	const { hasNonLocalWorkspace, setNativeWorkspaceFolders } = await loadTypeScript('src/vs/platform/remote/common/nativeWorkspace.ts');
+	const Rules = await loadClassMethods('src/vs/workbench/contrib/sidexChat/browser/settings/sections/rulesSection.ts', 'RulesSection', ['_loadData', '_createNewRule', '_createNewSkill'], {
+		hasNonLocalWorkspace,
+		localize: (_key, message) => message,
+		window: { dispatchEvent() {} },
+		CustomEvent
+	});
+	const calls = [];
+	const rules = new Rules();
+	rules._workspacePath = '/local project';
+	rules._userRulesPath = '/home/me/.sidex/rules';
+	rules._activeTab = 'project';
+	rules._renderDynamicContent = () => {};
+	rules._invoke = async (command, args) => {
+		calls.push([command, args]);
+		if (command === 'read_dir') return [{ name: 'example.md', path: `${args.path}/example.md`, is_dir: false }];
+		if (command === 'hooks_list') return [];
+	};
+	try {
+		setNativeWorkspaceFolders([{ scheme: 'file', authority: '', path: '/local project' }]);
+		await rules._loadData();
+		assert.deepEqual(rules._rules.map(rule => [rule.id, rule.scope]), [
+			['/local project/.sidex/rules/example.md', 'project'],
+			['/home/me/.sidex/rules/example.md', 'user']
+		]);
+		assert.equal(rules._skills[0].id, '/local project/.sidex/skills/example.md');
+		rules._createNewRule();
+		rules._createNewSkill();
+		rules._activeTab = 'user';
+		rules._createNewRule();
+		await new Promise(resolve => setImmediate(resolve));
+		const writes = calls.filter(([command]) => command === 'write_file').map(([, args]) => args);
+		assert.equal(writes.length, 3);
+		assert.ok(writes.some(args => args.path.startsWith('/home/me/.sidex/rules/')));
+		for (const args of writes) {
+			assert.equal(typeof args.content, 'string');
+			assert.ok(args.content.length > 0);
+			assert.equal('contents' in args, false);
+			assert.equal(args.path.includes('~'), false);
+		}
+	} finally {
+		globalThis.__SIDEX_WORKSPACE_FOLDERS__ = previous;
+	}
+});

@@ -32,6 +32,12 @@ interface HookItem {
 
 type TabFilter = 'all' | 'user' | 'project';
 
+interface RuleDirectoryEntry {
+	name: string;
+	path: string;
+	is_dir: boolean;
+}
+
 export class RulesSection implements SettingsSection {
 	private _container: HTMLElement | null = null;
 	private _invoke: TauriInvoke;
@@ -40,6 +46,7 @@ export class RulesSection implements SettingsSection {
 	private _skills: SkillItem[] = [];
 	private _hooks: HookItem[] = [];
 	private _workspacePath: string | null = null;
+	private _userRulesPath: string | null = null;
 	private _dynamicCardsWrapper: HTMLElement | null = null;
 
 	constructor(invoke: TauriInvoke) {
@@ -51,6 +58,15 @@ export class RulesSection implements SettingsSection {
 
 		const workspace = getNativeWorkspace();
 		this._workspacePath = !hasNonLocalWorkspace() && workspace?.scheme === 'file' ? URI.from(workspace).fsPath : null;
+		this._userRulesPath = null;
+		if (this._invoke) {
+			try {
+				const osInfo = (await this._invoke('get_os_info')) as { homedir?: string } | null;
+				if (osInfo?.homedir) this._userRulesPath = `${osInfo.homedir}/.sidex/rules`;
+			} catch {
+				/* User rules remain unavailable until the home directory can be resolved. */
+			}
+		}
 
 		container.innerHTML = '';
 
@@ -110,7 +126,9 @@ export class RulesSection implements SettingsSection {
 			items: filteredRules,
 			emptyText: localize('sidexSettingsNoRulesYet', 'No Rules Yet'),
 			newButtonText: localize('sidexSettingsNewRule', 'New Rule'),
-			newAction: this._activeTab === 'user' || this._workspacePath ? () => this._createNewRule() : undefined
+			newAction: (this._activeTab === 'user' ? this._userRulesPath : this._workspacePath)
+				? () => this._createNewRule()
+				: undefined
 		});
 
 		// Render Skills Card
@@ -143,14 +161,12 @@ export class RulesSection implements SettingsSection {
 		try {
 			const rulesDir = (
 				this._workspacePath ? await this._invoke('read_dir', { path: this._workspacePath + '/.sidex/rules' }) : null
-			) as {
-				entries: { name: string; is_dir: boolean }[];
-			} | null;
-			if (rulesDir && rulesDir.entries) {
-				this._rules = rulesDir.entries
+			) as RuleDirectoryEntry[] | null;
+			if (rulesDir) {
+				this._rules = rulesDir
 					.filter(e => !e.is_dir && (e.name.endsWith('.md') || e.name.endsWith('.mdc')))
 					.map(e => ({
-						id: e.name,
+						id: e.path,
 						name: e.name.replace(/\.(md|mdc)$/, ''),
 						scope: 'project' as const,
 						enabled: true
@@ -162,14 +178,14 @@ export class RulesSection implements SettingsSection {
 
 		// Also check user-level rules
 		try {
-			const homeRules = (await this._invoke('read_dir', { path: '~/.sidex/rules' })) as {
-				entries: { name: string; is_dir: boolean }[];
-			} | null;
-			if (homeRules && homeRules.entries) {
-				const userRules = homeRules.entries
+			const homeRules = (this._userRulesPath ? await this._invoke('read_dir', { path: this._userRulesPath }) : null) as
+				| RuleDirectoryEntry[]
+				| null;
+			if (homeRules) {
+				const userRules = homeRules
 					.filter(e => !e.is_dir && (e.name.endsWith('.md') || e.name.endsWith('.mdc')))
 					.map(e => ({
-						id: '~/.sidex/rules/' + e.name,
+						id: e.path,
 						name: e.name.replace(/\.(md|mdc)$/, ''),
 						scope: 'user' as const,
 						enabled: true
@@ -184,14 +200,12 @@ export class RulesSection implements SettingsSection {
 		try {
 			const skillsDir = (
 				this._workspacePath ? await this._invoke('read_dir', { path: this._workspacePath + '/.sidex/skills' }) : null
-			) as {
-				entries: { name: string; is_dir: boolean }[];
-			} | null;
-			if (skillsDir && skillsDir.entries) {
-				this._skills = skillsDir.entries
+			) as RuleDirectoryEntry[] | null;
+			if (skillsDir) {
+				this._skills = skillsDir
 					.filter(e => !e.is_dir || e.name !== '__pycache__')
 					.map(e => ({
-						id: e.name,
+						id: e.path,
 						name: e.name.replace(/\.(md|mdc)$/, ''),
 						scope: 'project' as const
 					}));
@@ -368,7 +382,8 @@ export class RulesSection implements SettingsSection {
 		const filename = `new-rule-${Date.now()}.md`;
 		const scope = this._activeTab === 'user' ? 'user' : 'project';
 		if (scope === 'project' && (!this._workspacePath || hasNonLocalWorkspace())) return;
-		const parentDir = scope === 'project' ? `${this._workspacePath}/.sidex/rules` : `~/.sidex/rules`;
+		const parentDir = scope === 'project' ? `${this._workspacePath}/.sidex/rules` : this._userRulesPath;
+		if (!parentDir) return;
 		const path = `${parentDir}/${filename}`;
 
 		const template = localize(
@@ -379,7 +394,7 @@ export class RulesSection implements SettingsSection {
 		this._invoke('mkdir', { path: parentDir, recursive: true })
 			.then(() => {
 				if (this._invoke && (scope === 'user' || !hasNonLocalWorkspace())) {
-					this._invoke('write_file', { path, contents: template })
+					this._invoke('write_file', { path, content: template })
 						.then(() => {
 							window.dispatchEvent(new CustomEvent('sidex-open-file', { detail: { path } }));
 							this._renderDynamicContent();
@@ -406,7 +421,7 @@ export class RulesSection implements SettingsSection {
 		this._invoke('mkdir', { path: parentDir, recursive: true })
 			.then(() => {
 				if (this._invoke && !hasNonLocalWorkspace()) {
-					this._invoke('write_file', { path, contents: template })
+					this._invoke('write_file', { path, content: template })
 						.then(() => {
 							window.dispatchEvent(new CustomEvent('sidex-open-file', { detail: { path } }));
 							this._renderDynamicContent();
