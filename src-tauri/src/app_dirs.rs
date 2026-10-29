@@ -21,6 +21,9 @@ const APP_NAME: &str = "SideX";
 /// This is where settings.json, databases, and other user data live.
 /// The path follows platform conventions and respects XDG on Linux.
 pub fn app_data_dir() -> PathBuf {
+    if let Some(portable) = sidex_extensions::paths::portable_data_dir() {
+        return portable;
+    }
     #[cfg(target_os = "linux")]
     {
         let base = std::env::var("XDG_CONFIG_HOME").map_or_else(
@@ -112,6 +115,11 @@ fn legacy_app_data_dir() -> Option<PathBuf> {
 /// (e.g., cross-device), we copy recursively instead.
 pub fn resolve_and_migrate() -> PathBuf {
     let new_dir = app_data_dir();
+
+    if sidex_extensions::paths::portable_data_dir().is_some() {
+        let _ = std::fs::create_dir_all(&new_dir);
+        return new_dir;
+    }
 
     if new_dir.exists() {
         migrate_dot_sidex_into(&new_dir);

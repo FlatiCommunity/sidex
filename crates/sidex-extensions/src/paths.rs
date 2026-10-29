@@ -14,12 +14,55 @@ use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "SideX";
 
+/// Portable mode never imports settings from the machine's normal profile.
+/// `SIDEX_PORTABLE` takes precedence; otherwise a data directory beside the
+/// executable enables it (beside the app bundle on macOS).
+pub fn portable_data_dir() -> Option<PathBuf> {
+    let executable = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())?;
+    resolve_portable_data_dir(
+        std::env::var_os("SIDEX_PORTABLE").as_deref(),
+        &executable,
+        cfg!(target_os = "macos"),
+    )
+}
+
+fn resolve_portable_data_dir(
+    configured: Option<&std::ffi::OsStr>,
+    executable: &std::path::Path,
+    macos: bool,
+) -> Option<PathBuf> {
+    let executable_dir = executable.parent()?;
+    if let Some(configured) = configured.filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(configured);
+        return Some(if path.is_absolute() {
+            path
+        } else {
+            executable_dir.join(path)
+        });
+    }
+    let data_dir = if macos {
+        executable
+            .ancestors()
+            .find(|path| path.extension().is_some_and(|extension| extension == "app"))?
+            .parent()?
+            .join("sidex-portable-data")
+    } else {
+        executable_dir.join("data")
+    };
+    data_dir.is_dir().then_some(data_dir)
+}
+
 /// Root `SideX` config directory following platform conventions.
 ///
 /// - Linux: `$XDG_CONFIG_HOME/SideX` (default `~/.config/SideX`)
 /// - macOS: `~/Library/Application Support/SideX`
 /// - Windows: `%APPDATA%/SideX`
 pub fn sidex_config_dir() -> PathBuf {
+    if let Some(portable) = portable_data_dir() {
+        return portable;
+    }
     #[cfg(target_os = "linux")]
     {
         let base = std::env::var("XDG_CONFIG_HOME").map_or_else(
@@ -95,6 +138,9 @@ pub fn user_data_dir() -> PathBuf {
 /// extension binaries separate from config. On other platforms, uses the
 /// same directory as config.
 fn extensions_base_dir() -> PathBuf {
+    if let Some(portable) = portable_data_dir() {
+        return portable;
+    }
     #[cfg(target_os = "linux")]
     {
         let base = std::env::var("XDG_DATA_HOME").map_or_else(
@@ -192,4 +238,42 @@ fn is_usable_node(binary: &str) -> bool {
     }
 
     cmd.status().is_ok_and(|s| s.success())
+}
+
+#[cfg(test)]
+mod portable_tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn explicit_relative_portable_directory_is_relative_to_executable() {
+        let executable = std::env::temp_dir().join("portable-editor").join("SideX");
+        assert_eq!(
+            resolve_portable_data_dir(Some(OsStr::new("profile")), &executable, false),
+            Some(executable.parent().unwrap().join("profile"))
+        );
+    }
+
+    #[test]
+    fn adjacent_data_directory_enables_portable_mode_without_environment_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("SideX");
+        assert_eq!(resolve_portable_data_dir(None, &executable, false), None);
+        std::fs::create_dir(root.path().join("data")).unwrap();
+        assert_eq!(
+            resolve_portable_data_dir(None, &executable, false),
+            Some(root.path().join("data"))
+        );
+    }
+
+    #[test]
+    fn mac_portable_profile_is_outside_the_signed_app_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("SideX.app/Contents/MacOS/SideX");
+        std::fs::create_dir(root.path().join("sidex-portable-data")).unwrap();
+        assert_eq!(
+            resolve_portable_data_dir(None, &executable, true),
+            Some(root.path().join("sidex-portable-data"))
+        );
+    }
 }

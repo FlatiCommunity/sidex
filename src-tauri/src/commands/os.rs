@@ -86,14 +86,34 @@ pub fn get_user_data_dir(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 pub(crate) fn resolve_user_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    #[cfg(target_os = "linux")]
-    if let Some(config_dir) = dirs::config_dir() {
-        return Ok(config_dir.join("SideX").join("UserData"));
+    let dir = crate::app_dirs::app_data_dir().join("UserData");
+    if sidex_extensions::paths::portable_data_dir().is_none() && !dir.exists() {
+        // Earlier builds used Tauri's identifier directory on Windows/macOS,
+        // while the native settings service read SideX/UserData instead.
+        let previous = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("UserData");
+        if previous != dir && previous.is_dir() {
+            copy_user_data(&previous, &dir)
+                .map_err(|e| format!("Could not migrate user data: {e}"))?;
+        }
     }
+    Ok(dir)
+}
 
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-    Ok(dir.join("UserData"))
+fn copy_user_data(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let destination = target.join(entry.file_name());
+        if kind.is_dir() {
+            copy_user_data(&entry.path(), &destination)?;
+        } else if kind.is_file() && !destination.exists() {
+            std::fs::copy(entry.path(), destination)?;
+        }
+    }
+    Ok(())
 }

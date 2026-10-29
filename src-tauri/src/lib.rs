@@ -456,6 +456,13 @@ pub fn run() {
         dotenvy::from_path(&env_path).ok();
     }
 
+    let mut context = tauri::generate_context!();
+    if let Some(portable) = sidex_extensions::paths::portable_data_dir() {
+        for window in &mut context.config_mut().app.windows {
+            window.data_directory = Some(portable.join("webview"));
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -567,19 +574,11 @@ pub fn run() {
             let app_data = crate::app_dirs::resolve_and_migrate();
             std::fs::create_dir_all(&app_data).ok();
             let db_path = app_data.join("sidex_storage.db");
-            // Non-UTF-8 app-data paths and a corrupt/locked DB must not hard-
-            // crash the app with no message — recreate the DB once, then fail
-            // with a readable error.
             let db_path_str = db_path.to_string_lossy().to_string();
-            let db = match StorageDb::new(&db_path_str) {
-                Ok(db) => db,
-                Err(e) => {
-                    log::error!("storage DB open failed ({e}); recreating {db_path_str}");
-                    let _ = std::fs::remove_file(&db_path);
-                    StorageDb::new(&db_path_str)
-                        .map_err(|e| format!("failed to initialize storage database: {e}"))?
-                }
-            };
+            // Never delete an existing database after an open error: a lock or
+            // temporary permission failure does not mean the data is corrupt.
+            let db = StorageDb::new(&db_path_str)
+                .map_err(|e| format!("Could not open storage database {}: {e}", db_path.display()))?;
 
             restore_and_show(app, &db);
 
@@ -616,7 +615,7 @@ pub fn run() {
 
             {
                 let settings_store = app.state::<Arc<SettingsStore>>();
-                let user_settings_path = app_data.join("UserData").join("User").join("settings.json");
+                let user_settings_path = commands::os::resolve_user_data_dir(app.handle())?.join("User").join("settings.json");
                 // Always record the path so user-scope updates persist to
                 // disk, even on first launch when the file doesn't exist yet.
                 settings_store.set_user_path(&user_settings_path);
@@ -628,16 +627,8 @@ pub fn run() {
             }
 
             let sidex_db_path = app_data.join("sidex_state.db");
-            // Same graceful-recreate policy as the storage DB above.
-            let sidex_db = match sidex_db::Database::open(&sidex_db_path) {
-                Ok(db) => db,
-                Err(e) => {
-                    log::error!("state DB open failed ({e}); recreating {}", sidex_db_path.display());
-                    let _ = std::fs::remove_file(&sidex_db_path);
-                    sidex_db::Database::open(&sidex_db_path)
-                        .map_err(|e| format!("failed to initialize sidex-db state database: {e}"))?
-                }
-            };
+            let sidex_db = sidex_db::Database::open(&sidex_db_path)
+                .map_err(|e| format!("Could not open state database {}: {e}", sidex_db_path.display()))?;
             app.manage(Arc::new(SidexDbState::new(sidex_db)));
 
             if let Err(err) = commands::updater::initialize(app.handle()) {
@@ -1071,7 +1062,7 @@ pub fn run() {
             commands::next_gen_tools::checkpoint_rollback,
             commands::next_gen_tools::analyze_error,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while running tauri application")
         .run(|app_handle, event| {
             // Kill every child process we spawned when the app exits —
