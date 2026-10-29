@@ -327,7 +327,8 @@ class FileAccessImpl {
 
 		if (uri.scheme === Schemas.file && (globalThis as any).__SIDEX_TAURI__) {
 			const encoded = encodeURIComponent(uri.fsPath);
-			return URI.parse(`sidex-asset://localhost/${encoded}`);
+			const origin = platform.isWindows ? 'http://sidex-asset.localhost' : 'sidex-asset://localhost';
+			return URI.parse(`${origin}/${encoded}`).with({ query: uri.query, fragment: uri.fragment });
 		}
 
 		// Convert to `vscode-file` resource..

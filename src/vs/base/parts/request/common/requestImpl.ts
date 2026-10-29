@@ -19,16 +19,21 @@ export async function request(
 
 	const cancellation = new AbortController();
 	const disposable = token.onCancellationRequested(() => cancellation.abort());
-	const signal = options.timeout
-		? AbortSignal.any([cancellation.signal, AbortSignal.timeout(options.timeout)])
-		: cancellation.signal;
+	// WKWebView on supported macOS versions does not implement AbortSignal.any
+	// or AbortSignal.timeout. One controller also lets us release the timeout
+	// as soon as the response body has finished, rather than retaining it.
+	let timedOut = false;
+	const timeout = options.timeout && options.timeout > 0 ? setTimeout(() => {
+		timedOut = true;
+		cancellation.abort();
+	}, options.timeout) : undefined;
 
 	try {
 		const fetchInit: RequestInit = {
 			method: options.type || 'GET',
 			headers: getRequestHeaders(options),
 			body: options.data,
-			signal
+			signal: cancellation.signal
 		};
 		if (options.disableCache) {
 			fetchInit.cache = 'no-store';
@@ -42,17 +47,23 @@ export async function request(
 			stream: bufferToStream(VSBuffer.wrap(new Uint8Array(await res.arrayBuffer())))
 		};
 	} catch (err) {
+		if (token.isCancellationRequested) {
+			throw canceled();
+		}
+		if (timedOut || err?.name === 'TimeoutError') {
+			throw new Error(`Fetch timeout: ${options.timeout}ms`);
+		}
 		if (isOnline && !isOnline()) {
 			throw new OfflineError();
 		}
 		if (err?.name === 'AbortError') {
 			throw canceled();
 		}
-		if (err?.name === 'TimeoutError') {
-			throw new Error(`Fetch timeout: ${options.timeout}ms`);
-		}
 		throw err;
 	} finally {
+		if (timeout !== undefined) {
+			clearTimeout(timeout);
+		}
 		disposable.dispose();
 	}
 }
