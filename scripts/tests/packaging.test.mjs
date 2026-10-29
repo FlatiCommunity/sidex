@@ -20,7 +20,7 @@ test('package manifests use actual artifact hashes, per-architecture assets, and
 			'SideX_0.1.3_x64-setup.exe',
 			'SideX_0.1.3_arm64-setup.exe',
 			'SideX_0.1.3_x64.dmg',
-			'SideX_0.1.3_aarch64.dmg',
+			'macos-arm64--SideX_0.1.3_aarch64.dmg',
 			'SideX_0.1.3_amd64.deb'
 		];
 		for (const filename of files) await fs.writeFile(path.join(artifacts, filename), `fixture bytes for ${filename}`);

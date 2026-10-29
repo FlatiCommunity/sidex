@@ -23,7 +23,8 @@ export async function collectReleaseArtifacts(directory, version, releaseBase) {
 			continue;
 		}
 		if (!entry.isFile()) continue;
-		const match = /^SideX_(.+)_(x64|amd64|x86_64|arm64|aarch64|universal)(-setup)?\.(exe|dmg|deb)$/i.exec(entry.name);
+		const artifactName = entry.name.replace(/^(?:macos-(?:arm64|x64|universal)|windows-(?:x64|arm64)|linux-x64)--/, '');
+		const match = /^SideX_(.+)_(x64|amd64|x86_64|arm64|aarch64|universal)(-setup)?\.(exe|dmg|deb)$/i.exec(artifactName);
 		if (!match) continue;
 		if (match[1] !== version) throw new Error(`${entry.name} does not match release version ${version}`);
 		const type = match[4].toLowerCase();

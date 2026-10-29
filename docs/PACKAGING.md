@@ -52,6 +52,29 @@ The generated `src-tauri/runtime/manifest.json` records executable paths, archit
 
 To include the local AI server, add `--server /path/to/sidex-server` to the staging command. A native build can use `--build-server`, which runs the real Go build with `CGO_ENABLED=1` and the required `fts5` build tag. This requires Go 1.26 or later and a C compiler. Cross-target server binaries must be built with the appropriate C toolchain and supplied with `--server`; the helper rejects mismatched executable architectures. Packaged resources are searched before the application's existing environment/PATH fallbacks.
 
+## Release drafts for this fork
+
+The release workflow runs on a `v*` tag or an explicit manual dispatch. The requested version accepts one optional `v` prefix and must match both `package.json` and `src-tauri/tauri.conf.json` exactly. Invalid SemVer, `vv` prefixes, and mismatched versions fail before the build matrix starts.
+
+The six targets are macOS ARM64, x64, and universal; Windows x64 and ARM64; and Linux x64. Each job installs the Node.js 24 build toolchain, stages the pinned Node.js 22 runtime, and calls the Tauri wrapper once. Tauri's existing `beforeBuildCommand` builds the frontend. There is no additional standalone frontend build. The workflow uses the current GitHub repository and does not require the original project's Cloudflare R2 account or signing services.
+
+Builds are unsigned by default. The following optional credentials enable signing:
+
+| Purpose | Configuration |
+| --- | --- |
+| Signed updater artifacts | `TAURI_SIGNING_PRIVATE_KEY` repository secret **and** `TAURI_SIGNING_PUBLIC_KEY` repository variable or secret, containing the key strings generated for this fork by `tauri signer generate` |
+| Encrypted updater private key | Optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secret |
+| Apple certificate signing | `APPLE_CERTIFICATE` (base64 P12) and `APPLE_CERTIFICATE_PASSWORD` secrets; optional `APPLE_SIGNING_IDENTITY` |
+| Apple notarization | Apple certificate signing plus all of `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`; `APPLE_ID_PASSWORD` is accepted as a legacy password-secret alias |
+
+Empty optional variables are removed before launching Tauri. Incomplete credential groups cause a clear error. Tauri imports an Apple certificate only when one is configured. The release helper first signs a temporary challenge and verifies it against the configured updater public key, then verifies every produced updater signature using Ed25519 and BLAKE2b before collecting assets. This turns Tauri's key-mismatch warning into a failed release build. Private keys and passwords are never written to generated configuration or printed by the helper.
+
+Without an updater key pair, updater artifact generation is disabled. Release configuration replaces the upstream public key and leaves update endpoints empty; an update feed must be configured separately when the fork maintainer is ready to serve signed updates. `src-tauri/tauri.release.conf.json` also defaults to unsigned output for direct local use. Apple code signing and updater signing are separate features, and enabling one does not imply the other. No signed platform installer or notarized application has been produced as part of this change.
+
+Artifact filenames include the matrix architecture, for example `macos-arm64--SideX.app.tar.gz`, so parallel macOS jobs cannot overwrite each other. Collection includes both Debian and RPM packages and uses the current Tauri v2 signature filenames. Each target includes a checksum list and an artifact inventory. The package-manifest generator below accepts these prefixed filenames as well as original Tauri filenames.
+
+After every build succeeds, the workflow creates or updates a **draft** GitHub Release in the current repository. It refuses to modify an already published release and does not mark a draft as the latest release. Publishing a draft remains a separate maintainer action. This workflow has been validated through helper tests and a real local Tauri signature fixture; it has not been dispatched during this work.
+
 ## Generate package-manager manifests
 
 After building the platform artifacts, generate manifests from their actual bytes:
@@ -96,8 +119,9 @@ The local generation and archive-extraction paths are covered by tests. A full F
 ```sh
 node scripts/tests/tooling.test.mjs
 node scripts/tests/packaging.test.mjs
+node scripts/tests/release.test.mjs
 ```
 
 These verify native PATH handling, literal CLI arguments, executable architecture detection, preservation of existing staging on invalid input, actual artifact hashes, per-architecture package metadata, and compressed Debian resource extraction. A staged Linux Node executable has also been launched successfully after copying it with its official license.
 
-The packaged runtime minimums follow [Node.js 22 platform support](https://github.com/nodejs/node/blob/v22.23.4/BUILDING.md#platform-list). The recipes are based on the [Tauri distribution documentation](https://v2.tauri.app/distribute/), [Nixpkgs Tauri hook](https://github.com/NixOS/nixpkgs/blob/ffb3c9b700e759be2ef13237c9d8f953b32a1e46/doc/hooks/tauri.section.md), and [GNOME runtime metadata](https://os.gnome.org/docs/ci-outputs.html).
+The packaged runtime minimums follow [Node.js 22 platform support](https://github.com/nodejs/node/blob/v22.23.4/BUILDING.md#platform-list). The recipes are based on the [Tauri distribution documentation](https://v2.tauri.app/distribute/), [Tauri updater signing](https://v2.tauri.app/plugin/updater/), [Tauri macOS signing](https://v2.tauri.app/distribute/sign/macos/), [Nixpkgs Tauri hook](https://github.com/NixOS/nixpkgs/blob/ffb3c9b700e759be2ef13237c9d8f953b32a1e46/doc/hooks/tauri.section.md), and [GNOME runtime metadata](https://os.gnome.org/docs/ci-outputs.html).
