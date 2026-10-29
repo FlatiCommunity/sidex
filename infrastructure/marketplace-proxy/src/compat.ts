@@ -29,10 +29,10 @@ export interface OpenVsxCompatResponse {
 	extensions: OpenVsxCompatItem[];
 }
 
-export function toOpenVsxCompat(items: NormalizedExtension[], offset: number): OpenVsxCompatResponse {
+export function toOpenVsxCompat(items: NormalizedExtension[], offset: number, total = items.length): OpenVsxCompatResponse {
 	return {
 		offset,
-		totalSize: items.length,
+		totalSize: total,
 		extensions: items.map(ext => ({
 			url: ext.downloadUrl,
 			files: {

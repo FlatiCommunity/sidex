@@ -9,6 +9,8 @@ interface MsExtensionFile {
 }
 
 interface MsExtensionVersion {
+	targetPlatform?: string;
+	properties?: { key: string; value: string }[];
 	version: string;
 	files?: MsExtensionFile[];
 	assetUri?: string;
@@ -21,7 +23,7 @@ interface MsStatistic {
 	value: number;
 }
 
-interface MsExtension {
+export interface MsExtension {
 	extensionId: string;
 	extensionName: string;
 	displayName: string;
@@ -85,6 +87,8 @@ export function normalizeMsExtension(ext: MsExtension): NormalizedExtension | un
 		iconUrl: icon,
 		downloadUrl: vsix ?? '',
 		source: 'microsoft',
+		targetPlatform: latest.targetPlatform,
+		galleryExtension: ext,
 		lastUpdated: ext.lastUpdated ?? ext.releaseDate ?? ext.versions[0]?.lastUpdated,
 		categories: ext.categories,
 		tags: ext.tags,
@@ -95,7 +99,8 @@ export function normalizeMsExtension(ext: MsExtension): NormalizedExtension | un
 export async function searchMicrosoftMarketplace(
 	query: string,
 	pageSize: number,
-	signal: AbortSignal
+	signal: AbortSignal,
+	offset = 0
 ): Promise<{ items: NormalizedExtension[]; total: number }> {
 	const body = {
 		filters: [
@@ -104,7 +109,7 @@ export async function searchMicrosoftMarketplace(
 					{ filterType: 8, value: 'Microsoft.VisualStudio.Code' },
 					{ filterType: 10, value: query || '' }
 				],
-				pageNumber: 1,
+				pageNumber: Math.floor(offset / pageSize) + 1,
 				pageSize,
 				sortBy: 0,
 				sortOrder: 0

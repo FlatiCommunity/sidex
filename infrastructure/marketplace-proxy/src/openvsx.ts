@@ -8,6 +8,7 @@ interface OpenVsxSearchItem {
 	name: string;
 	namespace: string;
 	version: string;
+	targetPlatform?: string;
 	displayName?: string;
 	description?: string;
 	averageRating?: number;
@@ -45,6 +46,7 @@ export function normalizeOpenVsxItem(item: OpenVsxSearchItem): NormalizedExtensi
 		iconUrl: item.files?.icon,
 		downloadUrl: download,
 		source: 'openvsx',
+		targetPlatform: item.targetPlatform,
 		lastUpdated: item.timestamp,
 		openVsxFileBase: fileBase
 	};
@@ -53,14 +55,17 @@ export function normalizeOpenVsxItem(item: OpenVsxSearchItem): NormalizedExtensi
 export async function searchOpenVsx(
 	query: string,
 	pageSize: number,
-	signal: AbortSignal
+	signal: AbortSignal,
+	offset = 0,
+	targetPlatform?: string
 ): Promise<{ items: NormalizedExtension[]; total: number }> {
 	const url = new URL(`${OPEN_VSX_BASE}/api/-/search`);
 	if (query) {
 		url.searchParams.set('query', query);
 	}
 	url.searchParams.set('size', String(pageSize));
-	url.searchParams.set('offset', '0');
+	url.searchParams.set('offset', String(offset));
+	if (targetPlatform) url.searchParams.set('targetPlatform', targetPlatform);
 	url.searchParams.set('includeAllVersions', 'false');
 
 	const res = await fetch(url.toString(), {

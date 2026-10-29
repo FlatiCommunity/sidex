@@ -1,3 +1,5 @@
+import type { MsExtension } from './ms';
+
 /**
  * Normalized extension shape returned to SideX. Both MS Marketplace
  * and Open VSX responses are flattened into this structure so the
@@ -15,6 +17,9 @@ export interface NormalizedExtension {
 	iconUrl?: string;
 	downloadUrl: string;
 	source: 'microsoft' | 'openvsx';
+	targetPlatform?: string;
+	/** Complete Microsoft metadata, including all native versions and engine requirements. */
+	galleryExtension?: MsExtension;
 	/** ISO date string for the version release, used for "Published X ago" display. */
 	lastUpdated?: string;
 	/** Extension categories e.g. ["Programming Languages", "Linters"] */

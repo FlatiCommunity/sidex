@@ -49,7 +49,7 @@ export default {
 				headers: {
 					'access-control-allow-origin': '*',
 					'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS',
-					'access-control-allow-headers': 'if-none-match, range, accept-encoding',
+					'access-control-allow-headers': 'if-none-match, range, accept-encoding, content-type, x-market-client-id, x-market-user-id, x-client-name, x-client-version',
 					'access-control-max-age': '86400'
 				}
 			});
@@ -109,7 +109,7 @@ export default {
 				try {
 					const body = await runSearch(query, pageSize, 0, shape, origin);
 					const etag = etagFor(body);
-					const cacheKey = `search2:${shape}:${pageSize}:0:${query.toLowerCase()}`;
+					const cacheKey = `search3:${shape}::${pageSize}:0:${query.toLowerCase()}`;
 					const edgeReq = new Request(`https://sidex-cache/${encodeURIComponent(cacheKey)}`);
 					await Promise.all([
 						env.MARKETPLACE_CACHE.put(cacheKey, body, {
@@ -148,7 +148,7 @@ async function handleVsGallery(url: URL, request: Request, env: Env, ctx: Execut
 	const etag = etagFor(bodyText);
 	// v2 prefix busts any stale edge/KV cache entries from before the
 	// asset URL rewriting fixes (wrong assetUri format causing 404s).
-	const cacheKey = `gallery2:${etag}`;
+	const cacheKey = `gallery3:${url.searchParams.get('targetPlatform') ?? ''}:${etag}`;
 
 	const edgeReq = new Request(`https://sidex-cache/${encodeURIComponent(cacheKey)}`);
 	const edgeHit = await caches.default.match(edgeReq);
@@ -219,7 +219,8 @@ async function handleSearch(
 	const query = (url.searchParams.get('q') ?? url.searchParams.get('query') ?? '').trim();
 	const pageSize = Math.min(Number(url.searchParams.get('pageSize') ?? url.searchParams.get('size')) || 50, 100);
 	const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
-	const cacheKey = `search2:${shape}:${pageSize}:${offset}:${query.toLowerCase()}`;
+	const targetPlatform = url.searchParams.get('targetPlatform') ?? undefined;
+	const cacheKey = `search3:${shape}:${targetPlatform ?? ''}:${pageSize}:${offset}:${query.toLowerCase()}`;
 
 	const edgeReq = new Request(`https://sidex-cache/${encodeURIComponent(cacheKey)}`);
 	const edgeHit = await caches.default.match(edgeReq);
@@ -251,7 +252,7 @@ async function handleSearch(
 	}
 
 	const origin = new URL(request.url).origin;
-	const body = await runSearch(query, pageSize, offset, shape, origin);
+	const body = await runSearch(query, pageSize, offset, shape, origin, targetPlatform);
 	const etag = etagFor(body);
 	ctx.waitUntil(env.MARKETPLACE_CACHE.put(cacheKey, body, { expirationTtl: SEARCH_CACHE_TTL }));
 	const notModified = notModifiedResponse(request, etag);
@@ -275,7 +276,7 @@ async function refreshSearch(
 	const query = (url.searchParams.get('q') ?? url.searchParams.get('query') ?? '').trim();
 	const pageSize = Math.min(Number(url.searchParams.get('pageSize') ?? url.searchParams.get('size')) || 50, 100);
 	const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
-	const body = await runSearch(query, pageSize, offset, shape, 'https://sidex-cache');
+	const body = await runSearch(query, pageSize, offset, shape, url.origin, url.searchParams.get('targetPlatform') ?? undefined);
 	const etag = etagFor(body);
 	await env.MARKETPLACE_CACHE.put(cacheKey, body, { expirationTtl: SEARCH_CACHE_TTL });
 	await caches.default.put(edgeReq, jsonResponse(body, SEARCH_CACHE_TTL, 'miss', etag).clone());
@@ -286,13 +287,14 @@ async function runSearch(
 	pageSize: number,
 	offset: number,
 	shape: 'normalized' | 'openvsx-compat',
-	origin: string
+	origin: string,
+	targetPlatform?: string
 ): Promise<string> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 	const [msResult, ovsxResult] = await Promise.allSettled([
-		searchMicrosoftMarketplace(query, pageSize, controller.signal),
-		searchOpenVsx(query, pageSize, controller.signal)
+		searchMicrosoftMarketplace(query, pageSize, controller.signal, offset),
+		searchOpenVsx(query, pageSize, controller.signal, offset, targetPlatform)
 	]);
 	clearTimeout(timeout);
 
@@ -309,12 +311,13 @@ async function runSearch(
 			iconUrl: ext.iconUrl ? rewriteIconUrl(ext.iconUrl, origin) : undefined
 		}));
 
+	const total = Math.max(msResult.status === 'fulfilled' ? msResult.value.total : 0, ovsxResult.status === 'fulfilled' ? ovsxResult.value.total : 0, merged.length);
 	if (shape === 'openvsx-compat') {
-		return JSON.stringify(toOpenVsxCompat(merged, offset));
+		return JSON.stringify(toOpenVsxCompat(merged, offset, total));
 	}
 	const payload: NormalizedSearchResponse = {
 		results: merged,
-		totalCount: merged.length,
+		totalCount: total,
 		sources: {
 			microsoft: { ok: msResult.status === 'fulfilled', count: msItems.length },
 			openvsx: { ok: ovsxResult.status === 'fulfilled', count: ovsxItems.length }
@@ -481,7 +484,7 @@ async function handleAsset(url: URL, _request: Request, _env: Env, ctx: Executio
 				const targetPlatform = url.searchParams.get('targetPlatform');
 				// For Open VSX /file/ base URLs, map MS asset type names to real
 				// Open VSX filenames. For MS CDN URLs, append the type directly.
-				const resolvedType = decoded.includes('open-vsx.org') ? openVsxFilename(assetType) : assetType;
+				const resolvedType = decoded.includes('open-vsx.org/api/') && decoded.endsWith('/file') ? openVsxFilename(assetType) : assetType;
 				upstreamUrl = `${decoded}/${resolvedType}${targetPlatform ? `?targetPlatform=${encodeURIComponent(targetPlatform)}` : ''}`;
 			} else {
 				throw new Error('not a URL');
