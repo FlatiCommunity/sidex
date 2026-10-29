@@ -1,3 +1,4 @@
+import { localizedSettingOptions } from '../settingLabels.js';
 /*---------------------------------------------------------------------------------------------
  *  General section for SideX Settings panel.
  *  Renders using VS Code settings-editor row structure for 1:1 parity.
@@ -167,13 +168,13 @@ export class GeneralSection implements SettingsSection {
 	}
 
 	private _renderLayout(container: HTMLElement): void {
-		this._createSectionTitle(container, 'Layout');
+		this._createSectionTitle(container, nls.localize('sidex.ui.layout.a51190', 'Layout'));
 		const card = this._createCard(container);
 
 		this._addSelectRow(
 			card,
-			'Window Layout',
-			'Choose default window arrangement',
+			nls.localize('sidex.ui.windowLayout.eedb6f', 'Window Layout'),
+			nls.localize('sidex.ui.chooseDefaultWindowArrangement.2214ed', 'Choose default window arrangement'),
 			['Editor', 'Agent'],
 			this._getSetting('windowLayout', 'Editor') as string,
 			'sidex.general.windowLayout'
@@ -181,8 +182,8 @@ export class GeneralSection implements SettingsSection {
 
 		this._addSelectRow(
 			card,
-			'Conversation Density',
-			'Adjust chat message spacing',
+			nls.localize('sidex.ui.conversationDensity.d0fffb', 'Conversation Density'),
+			nls.localize('sidex.ui.adjustChatMessageSpacing.8a4e55', 'Adjust chat message spacing'),
 			['Compact', 'Comfortable', 'Spacious'],
 			this._getSetting('conversationDensity', 'Comfortable') as string,
 			'sidex.general.conversationDensity'
@@ -190,24 +191,24 @@ export class GeneralSection implements SettingsSection {
 
 		this._addToggleRow(
 			card,
-			'Title Bar',
-			'Show the window title bar',
+			nls.localize('sidex.ui.titleBar.d9abd3', 'Title Bar'),
+			nls.localize('sidex.ui.showTheWindowTitleBar.0ff30e', 'Show the window title bar'),
 			'sidex.general.titleBar',
 			this._getSetting('titleBar', true) as boolean
 		);
 
 		this._addToggleRow(
 			card,
-			'Status Bar',
-			'Show the status bar at the bottom',
+			nls.localize('sidex.ui.statusBar.3ef6e9', 'Status Bar'),
+			nls.localize('sidex.ui.showTheStatusBarAtTheBottom.27f7e1', 'Show the status bar at the bottom'),
 			'sidex.general.statusBar',
 			this._getSetting('statusBar', true) as boolean
 		);
 
 		this._addSelectRow(
 			card,
-			'Review Control Location',
-			'Where to show review controls',
+			nls.localize('sidex.ui.reviewControlLocation.3b4985', 'Review Control Location'),
+			nls.localize('sidex.ui.whereToShowReviewControls.81bfa9', 'Where to show review controls'),
 			['Gutter', 'Toolbar', 'Both'],
 			this._getSetting('reviewControlLocation', 'Gutter') as string,
 			'sidex.general.reviewControlLocation'
@@ -215,15 +216,15 @@ export class GeneralSection implements SettingsSection {
 
 		this._addToggleRow(
 			card,
-			'Auto-hide editor when empty',
-			'Collapse editor panel if no tabs are open',
+			nls.localize('sidex.ui.autoHideEditorWhenEmpty.413b32', 'Auto-hide editor when empty'),
+			nls.localize('sidex.ui.collapseEditorPanelIfNoTabsAre.8aafb7', 'Collapse editor panel if no tabs are open'),
 			'sidex.general.autoHideEditor',
 			this._getSetting('autoHideEditor', false) as boolean
 		);
 
 		const tabsRow = this._addToggleRow(
 			card,
-			'Open chat as editor tabs',
+			nls.localize('sidex.ui.openChatAsEditorTabs.ed05ed', 'Open chat as editor tabs'),
 			'',
 			'sidex.general.chatAsTabs',
 			this._getSetting('chatAsTabs', false) as boolean
@@ -482,7 +483,7 @@ export class GeneralSection implements SettingsSection {
 		settingKey: string
 	): HTMLElement {
 		const row = this._createRow(parent, label, description);
-		const dropdown = createCustomDropdown(options, currentValue, newValue => {
+		const dropdown = createCustomDropdown(localizedSettingOptions(options), currentValue, newValue => {
 			this._saveSetting(settingKey, newValue);
 		});
 		row.querySelector('.sidex-settings-row-action')!.appendChild(dropdown);

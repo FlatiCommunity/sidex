@@ -1,3 +1,4 @@
+import { localize } from '../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Sidex Chat View — Composes component classes into the chat panel
  *--------------------------------------------------------------------------------------------*/
@@ -366,7 +367,14 @@ export class SidexChatViewPane extends ViewPane {
 						break;
 
 					case 'delete':
-						if (confirm('Are you sure you want to delete this chat session?')) {
+						if (
+							confirm(
+								localize(
+									'sidex.ui.areYouSureYouWantToDelete.d932f5',
+									'Are you sure you want to delete this chat session?'
+								)
+							)
+						) {
 							await this.chatService.deleteSession(sessionId);
 							if (this.chatService.sessionId === sessionId) {
 								this._renderedMessageCount = 0;
@@ -377,7 +385,7 @@ export class SidexChatViewPane extends ViewPane {
 						break;
 
 					case 'rename':
-						const newTitle = prompt('Rename Chat', session.title);
+						const newTitle = prompt(localize('sidex.ui.renameChat.a257de', 'Rename Chat'), session.title);
 						if (newTitle && newTitle.trim() !== '') {
 							await this.chatService.renameSession(sessionId, newTitle.trim());
 							this._fetchSessions();
@@ -521,7 +529,7 @@ export class SidexChatViewPane extends ViewPane {
 				if (chunk.type === 'subagent_spawned' && chunk.subagent_id) {
 					this._showSubagentCard({
 						id: chunk.subagent_id,
-						description: chunk.subagent_description || 'Subagent',
+						description: chunk.subagent_description || localize('sidex.ui.subagent.d6cb41', 'Subagent'),
 						model: chunk.subagent_model || '',
 						status: 'running',
 						prompt: chunk.subagent_prompt || '',
@@ -777,7 +785,7 @@ export class SidexChatViewPane extends ViewPane {
 		// Redo checkpoint link (above the dimmed messages)
 		const redoLink = document.createElement('div');
 		redoLink.className = 'sc-redo-checkpoint';
-		redoLink.textContent = 'Redo checkpoint';
+		redoLink.textContent = localize('sidex.ui.redoCheckpoint.9fa579', 'Redo checkpoint');
 		redoLink.addEventListener('click', () => {
 			this.chatService.redoCheckpoint();
 		});
@@ -909,10 +917,10 @@ export class SidexChatViewPane extends ViewPane {
 		title.className = 'sc-error-banner-title';
 		title.textContent =
 			text.includes('usage cap') || text.includes('Anthropic returned 429')
-				? 'Claude usage limit'
+				? localize('sidex.ui.claudeUsageLimit.265421', 'Claude usage limit')
 				: text.includes('Anthropic blocked') || text.includes('Anthropic refused')
-					? 'Anthropic blocked this login'
-					: 'Unable to reach model';
+					? localize('sidex.ui.anthropicBlockedThisLogin.bad0f9', 'Anthropic blocked this login')
+					: localize('sidex.ui.unableToReachModel.60d453', 'Unable to reach model');
 		row1.appendChild(title);
 		banner.appendChild(row1);
 
@@ -933,12 +941,12 @@ export class SidexChatViewPane extends ViewPane {
 		row3.className = 'sc-error-banner-row3';
 		const idEl = document.createElement('span');
 		idEl.className = 'sc-error-banner-id';
-		idEl.textContent = `Request (${requestId.slice(0, 8)})`;
+		idEl.textContent = localize('sidex.ui.request.ea6a50', 'Request ({0})', requestId.slice(0, 8));
 		row3.appendChild(idEl);
 
 		const retryBtn = document.createElement('button');
 		retryBtn.className = 'sc-error-banner-retry';
-		retryBtn.textContent = 'Try again';
+		retryBtn.textContent = localize('sidex.ui.tryAgain.d8b839', 'Try again');
 		retryBtn.addEventListener('click', () => {
 			banner.remove();
 			// Retry: just call sendMessage with the last user text.
@@ -1045,7 +1053,7 @@ export class SidexChatViewPane extends ViewPane {
 		this._viewDisposables.add(this._orchView);
 		this._viewDisposables.add(
 			this._orchView.onCancel(() => {
-				this._orchestrator?.cancel('User cancelled from UI');
+				this._orchestrator?.cancel(localize('sidex.orch.userCancelled', 'User cancelled'));
 			})
 		);
 

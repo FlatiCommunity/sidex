@@ -588,7 +588,10 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 				if (this._reconnectAttempts === 0) {
 					const why =
 						ep.error?.trim() ||
-						'The local AI server is not running. Chat cannot send until sidex-server is built and the app is restarted.';
+						localize(
+							'sidex.error.serverNotRunning',
+							'The local AI server is not running. Chat cannot send until sidex-server is built and the app is restarted.'
+						);
 					this._onDidReceiveChunk.fire({ type: 'error', content: why } as IStreamChunk);
 				}
 				this._scheduleReconnect();
@@ -673,7 +676,10 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 			this._setStreaming(false);
 			this._onDidReceiveChunk.fire({
 				type: 'error',
-				content: localize('sidexChat.remoteExecutionUnavailable', 'The local agent cannot execute tools in a remote workspace. Use the remote terminal for commands; local files will not be modified.')
+				content: localize(
+					'sidexChat.remoteExecutionUnavailable',
+					'The local agent cannot execute tools in a remote workspace. Use the remote terminal for commands; local files will not be modified.'
+				)
 			} as IStreamChunk);
 			return;
 		}
@@ -694,7 +700,10 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 					this._setStreaming(false);
 					this._onDidReceiveChunk.fire({
 						type: 'error',
-						content: 'Unable to reach the server. Please check your connection and try again.'
+						content: localize(
+							'sidex.error.connection',
+							'Unable to reach the server. Please check your connection and try again.'
+						)
 					} as IStreamChunk);
 				}
 			}, 5000);
@@ -1391,13 +1400,18 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 			// Handle different argument formats the server might use
 			if (Array.isArray(args.tasks)) {
 				tasks = args.tasks.map((t: { description?: string; prompt?: string; task?: string; goal?: string }) => ({
-					description: t.description || t.task || localize("sidex.ui.subtask.363a99", "subtask"),
+					description: t.description || t.task || localize('sidex.ui.subtask.363a99', 'subtask'),
 					prompt: t.prompt || t.goal || t.description || ''
 				}));
 			} else if (args.prompt || args.task || args.goal) {
-				tasks = [{ description: args.description || localize("sidex.ui.subtask.363a99", "subtask"), prompt: args.prompt || args.task || args.goal }];
+				tasks = [
+					{
+						description: args.description || localize('sidex.ui.subtask.363a99', 'subtask'),
+						prompt: args.prompt || args.task || args.goal
+					}
+				];
 			} else if (typeof args === 'string') {
-				tasks = [{ description: localize("sidex.ui.subtask.363a99", "subtask"), prompt: args }];
+				tasks = [{ description: localize('sidex.ui.subtask.363a99', 'subtask'), prompt: args }];
 			}
 		} catch {
 			return {
@@ -1583,7 +1597,7 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 							break;
 						case 'error':
 							clearTimeout(timer);
-							finish(false, chunk.error || chunk.content || 'Unknown error');
+							finish(false, chunk.error || chunk.content || localize('sidex.error.unknown', 'Unknown error'));
 							break;
 					}
 				} catch {
@@ -1593,7 +1607,7 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 
 			ws.onerror = () => {
 				clearTimeout(timer);
-				finish(false, 'WebSocket error');
+				finish(false, localize('sidex.error.websocket', 'WebSocket error'));
 			};
 			ws.onclose = () => {
 				clearTimeout(timer);
@@ -1710,7 +1724,7 @@ ${prompt}`,
 							break;
 						case 'error':
 							clearTimeout(timer);
-							finish(false, chunk.error || chunk.content || 'Unknown error');
+							finish(false, chunk.error || chunk.content || localize('sidex.error.unknown', 'Unknown error'));
 							break;
 					}
 				} catch {
@@ -1720,7 +1734,7 @@ ${prompt}`,
 
 			ws.onerror = () => {
 				clearTimeout(timer);
-				finish(false, 'WebSocket error');
+				finish(false, localize('sidex.error.websocket', 'WebSocket error'));
 			};
 
 			ws.onclose = () => {
@@ -2042,7 +2056,7 @@ ${prompt}`,
 				// so the view can show it as a dismissible banner above the input.
 				this._onDidReceiveChunk.fire({
 					type: 'error',
-					content: chunk.error || 'An unexpected error occurred.'
+					content: chunk.error || localize('sidex.error.unexpected', 'An unexpected error occurred.')
 				} as IStreamChunk);
 				if (this._currentAssistantMessage) {
 					this._persistAssistantMessage(this._currentAssistantMessage);

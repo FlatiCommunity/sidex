@@ -1639,14 +1639,20 @@ export class ChatInput extends Component {
 		}
 		const maxLabel =
 			maxTokens >= 1_000_000 ? `${(maxTokens / 1_000_000).toFixed(0)}M` : `${Math.round(maxTokens / 1000)}K`;
-		contextBadge.title = `Context: ~${(totalTokens / 1000).toFixed(1)}K of ${maxLabel} tokens (${pct < 1 ? pct.toFixed(1) : Math.round(pct)}% full)`;
+		contextBadge.title = localize(
+			'sidex.ui.contextKOfTokensFull.7d642a',
+			'Context: ~{0}K of {1} tokens ({2}% full)',
+			(totalTokens / 1000).toFixed(1),
+			maxLabel,
+			pct < 1 ? pct.toFixed(1) : Math.round(pct)
+		);
 
 		// Clear and rebuild popover body dynamically
 		popover.innerHTML = '';
 
 		const header = DOM.append(popover, $('div.sc-context-header'));
 		const title = DOM.append(header, $('div.sc-context-title'));
-		title.textContent = 'Context Usage';
+		title.textContent = localize('sidex.ui.contextUsage.6e59a3', 'Context Usage');
 
 		const actions = DOM.append(header, $('div.sc-context-actions'));
 
@@ -1656,10 +1662,15 @@ export class ChatInput extends Component {
 
 		const summary = DOM.append(popover, $('div.sc-context-summary'));
 		const pctFull = DOM.append(summary, $('span'));
-		pctFull.textContent = `${pct < 1 ? pct.toFixed(1) : Math.round(pct)}% Full`;
+		pctFull.textContent = localize('sidex.ui.full.4ee994', '{0}% Full', pct < 1 ? pct.toFixed(1) : Math.round(pct));
 		pctFull.style.fontWeight = 'bold';
 		const tokenFraction = DOM.append(summary, $('span'));
-		tokenFraction.textContent = `~${(totalTokens / 1000).toFixed(1)}K / ${maxLabel} Tokens`;
+		tokenFraction.textContent = localize(
+			'sidex.ui.kTokens.e0c341',
+			'~{0}K / {1} Tokens',
+			(totalTokens / 1000).toFixed(1),
+			maxLabel
+		);
 
 		const bar = DOM.append(popover, $('div.sc-context-bar'));
 
@@ -1668,12 +1679,12 @@ export class ChatInput extends Component {
 		seg.style.width = `${pct}%`;
 
 		const segments = [
-			{ tokens: systemTokens, name: 'System prompt' },
-			{ tokens: toolTokens, name: 'Tool definitions' },
-			{ tokens: skillsTokens, name: 'Skills' },
+			{ tokens: systemTokens, name: localize('sidex.context.system', 'System prompt') },
+			{ tokens: toolTokens, name: localize('sidex.context.tools', 'Tool definitions') },
+			{ tokens: skillsTokens, name: localize('sidex.context.skills', 'Skills') },
 			{ tokens: mcpTokens, name: 'MCP' },
-			{ tokens: subagentTokens, name: 'Subagent definitions' },
-			{ tokens: conversationTokens, name: 'Conversation' }
+			{ tokens: subagentTokens, name: localize('sidex.context.subagents', 'Subagent definitions') },
+			{ tokens: conversationTokens, name: localize('sidex.context.conversation', 'Conversation') }
 		];
 
 		const legend = DOM.append(popover, $('div.sc-context-legend'));
@@ -1685,7 +1696,8 @@ export class ChatInput extends Component {
 			name.textContent = s.name;
 
 			const val = DOM.append(row, $('span.sc-context-legend-val'));
-			val.textContent = s.tokens >= 1000 ? `${(s.tokens / 1000).toFixed(1)}K` : `${s.tokens}`;
+			val.textContent =
+				s.tokens >= 1000 ? localize('sidex.ui.k.dc8d44', '{0}K', (s.tokens / 1000).toFixed(1)) : `${s.tokens}`;
 		}
 	}
 }

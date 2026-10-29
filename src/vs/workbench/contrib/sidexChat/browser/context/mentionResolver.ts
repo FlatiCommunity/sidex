@@ -1,3 +1,4 @@
+import { localize } from '../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  MentionResolver — resolves @ mentions to file/folder/symbol content for Sidex Chat
  *--------------------------------------------------------------------------------------------*/
@@ -75,8 +76,9 @@ export class MentionResolver {
 			return [
 				{
 					type: 'codebase',
-					label: 'codebase',
-					detail: 'Search the entire indexed codebase',
+					label: localize('sidex.ui.codebase.646155', 'codebase'),
+					detail: localize('sidex.mention.codebaseDetail', 'Search the entire indexed codebase'),
+					content: trimmed.slice('codebase'.length).trim(),
 					iconClass: 'codicon-search'
 				}
 			];
@@ -122,7 +124,7 @@ export class MentionResolver {
 	}
 
 	private async _resolveCodebase(item: MentionItem): Promise<string> {
-		const query = item.content || item.detail || '';
+		const query = item.content || '';
 		if (!query) {
 			return '[No codebase search query provided]';
 		}
@@ -143,7 +145,7 @@ export class MentionResolver {
 				items.push({
 					type: 'file',
 					label,
-					detail: FILE_EXTENSIONS[ext] || 'File',
+					detail: FILE_EXTENSIONS[ext] || localize('sidex.mention.file', 'File'),
 					fullPath,
 					iconClass: 'codicon-file'
 				});
@@ -173,7 +175,9 @@ export class MentionResolver {
 				items.push({
 					type: isDir ? 'folder' : 'file',
 					label,
-					detail: isDir ? 'Folder' : FILE_EXTENSIONS[ext] || 'File',
+					detail: isDir
+						? localize('sidex.mention.folder', 'Folder')
+						: FILE_EXTENSIONS[ext] || localize('sidex.mention.file', 'File'),
 					fullPath,
 					iconClass: isDir ? 'codicon-folder' : 'codicon-file'
 				});

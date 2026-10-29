@@ -1,3 +1,4 @@
+import { localize } from '../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Sidex Orchestration UI — Enhanced task tree with detail panel and streaming logs
  *--------------------------------------------------------------------------------------------*/
@@ -5,7 +6,24 @@
 import './orchestration.css';
 import { Component, DOM, $ } from '../components/base.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import type { OrchestrationPlan, TaskNode, TaskStatus, OrchestratorEvent, TaskHandoff } from './types.js';
+import type { OrchestrationPlan, TaskNode, TaskNodeType, TaskStatus, OrchestratorEvent, TaskHandoff } from './types.js';
+
+const TASK_TYPE_LABELS: Record<TaskNodeType, string> = {
+	planner: localize('taskType.planner', 'Planner'),
+	subplanner: localize('taskType.subplanner', 'Subplanner'),
+	worker: localize('taskType.worker', 'Worker'),
+	verifier: localize('taskType.verifier', 'Verifier')
+};
+
+const STATUS_LABELS: Record<TaskStatus, string> = {
+	pending: localize('taskStatus.pending', 'Pending'),
+	queued: localize('taskStatus.queued', 'Queued'),
+	running: localize('taskStatus.running', 'Running'),
+	completed: localize('taskStatus.completed', 'Completed'),
+	failed: localize('taskStatus.failed', 'Failed'),
+	cancelled: localize('taskStatus.cancelled', 'Cancelled'),
+	blocked: localize('taskStatus.blocked', 'Blocked')
+};
 
 const STATUS_ICONS: Record<TaskStatus, string> = {
 	pending: '○',
@@ -52,11 +70,14 @@ export class OrchestrationView extends Component {
 		const titleRow = DOM.append(this._headerEl, $('div.orch-title-row'));
 		const titleLeft = DOM.append(titleRow, $('div.orch-title-left'));
 		DOM.append(titleLeft, $('span.orch-icon')).textContent = '⬡';
-		DOM.append(titleLeft, $('span.orch-title')).textContent = 'Orchestration';
+		DOM.append(titleLeft, $('span.orch-title')).textContent = localize(
+			'sidex.ui.orchestration.ed4fdd',
+			'Orchestration'
+		);
 
 		const actions = DOM.append(titleRow, $('div.orch-actions'));
 		const cancelBtn = DOM.append(actions, $('button.orch-cancel-btn'));
-		cancelBtn.textContent = 'Stop';
+		cancelBtn.textContent = localize('sidex.ui.stop.cae7d5', 'Stop');
 		this.on(cancelBtn, 'click', () => this._onCancel.fire());
 
 		this._progressEl = this.append('div', 'orch-progress');
@@ -83,13 +104,16 @@ export class OrchestrationView extends Component {
 				break;
 			case 'task_status':
 				this._updateTask(event.taskId, event.status);
-				this._appendLog(event.taskId, `[${event.status}] ${event.message || ''}`);
+				this._appendLog(event.taskId, `[${STATUS_LABELS[event.status]}] ${event.message || ''}`);
 				break;
 			case 'task_text':
 				this._appendLog(event.taskId, event.text);
 				break;
 			case 'task_tool_call':
-				this._appendLog(event.taskId, `⚡ ${event.toolName} (${event.status})`);
+				this._appendLog(
+					event.taskId,
+					`⚡ ${event.toolName} (${event.status === 'error' ? STATUS_LABELS.failed : STATUS_LABELS[event.status]})`
+				);
 				break;
 			case 'progress':
 				this._updateProgress(event.completedTasks, event.totalTasks, event.elapsedMs);
@@ -136,10 +160,11 @@ export class OrchestrationView extends Component {
 
 		const statusIcon = DOM.append(row, $('span.orch-task-icon'));
 		statusIcon.textContent = STATUS_ICONS[task.status];
+		statusIcon.title = STATUS_LABELS[task.status];
 		statusIcon.classList.add(STATUS_CLASSES[task.status]);
 
 		const typeTag = DOM.append(row, $('span.orch-task-type'));
-		typeTag.textContent = task.type;
+		typeTag.textContent = TASK_TYPE_LABELS[task.type];
 		typeTag.classList.add(`orch-type-${task.type}`);
 
 		const nameEl = DOM.append(row, $('span.orch-task-name'));
@@ -198,7 +223,7 @@ export class OrchestrationView extends Component {
 			DOM.append(metaEl, $('div.orch-detail-goal')).textContent = task.scopedGoal;
 			if (task.acceptance.length > 0) {
 				const accEl = DOM.append(metaEl, $('div.orch-detail-acceptance'));
-				DOM.append(accEl, $('strong')).textContent = 'Acceptance:';
+				DOM.append(accEl, $('strong')).textContent = localize('sidex.ui.acceptance.172b6f', 'Acceptance:');
 				for (const a of task.acceptance) {
 					DOM.append(accEl, $('div.orch-detail-criterion')).textContent = `• ${a}`;
 				}
@@ -248,6 +273,7 @@ export class OrchestrationView extends Component {
 				icon.classList.remove(cls);
 			}
 			icon.textContent = STATUS_ICONS[status];
+			icon.title = STATUS_LABELS[status];
 			icon.classList.add(STATUS_CLASSES[status]);
 		}
 
@@ -260,7 +286,13 @@ export class OrchestrationView extends Component {
 		if (bar) {
 			bar.style.width = `${pct}%`;
 		}
-		this._statusEl.textContent = `${completed}/${total} tasks • ${formatElapsed(elapsedMs)}`;
+		this._statusEl.textContent = localize(
+			'sidex.ui.tasks.064180',
+			'{0}/{1} tasks • {2}',
+			completed,
+			total,
+			formatElapsed(elapsedMs)
+		);
 	}
 
 	private _showHandoff(handoff: TaskHandoff): void {
@@ -289,7 +321,7 @@ export class OrchestrationView extends Component {
 
 	private _showComplete(elapsedMs: number): void {
 		this._headerEl.classList.add('orch-complete');
-		this._statusEl.textContent = `Complete • ${formatElapsed(elapsedMs)}`;
+		this._statusEl.textContent = localize('sidex.ui.complete.ab5fcf', 'Complete • {0}', formatElapsed(elapsedMs));
 		const bar = this._progressEl.querySelector('.orch-progress-bar') as HTMLElement;
 		if (bar) {
 			bar.style.width = '100%';
@@ -298,7 +330,7 @@ export class OrchestrationView extends Component {
 
 	private _showCancelled(reason: string): void {
 		this._headerEl.classList.add('orch-cancelled');
-		this._statusEl.textContent = `Stopped: ${reason}`;
+		this._statusEl.textContent = localize('sidex.ui.stopped.a38d02', 'Stopped: {0}', reason);
 	}
 
 	private _showTaskError(taskId: string, _error: string): void {
@@ -316,8 +348,8 @@ function truncate(s: string, max: number): string {
 function formatElapsed(ms: number): string {
 	const s = Math.floor(ms / 1000);
 	if (s < 60) {
-		return `${s}s`;
+		return localize('sidex.time.seconds', '{0}s', s);
 	}
 	const m = Math.floor(s / 60);
-	return `${m}m ${s % 60}s`;
+	return localize('sidex.time.minutesSeconds', '{0}m {1}s', m, s % 60);
 }

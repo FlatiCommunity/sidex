@@ -180,7 +180,9 @@ class SidexStatusBarContribution implements IWorkbenchContribution {
 	}
 
 	private _sidexTooltip(): string {
-		return this.layoutService.isVisible(Parts.SIDEX_PART) ? 'Hide Sidex' : 'Show Sidex';
+		return this.layoutService.isVisible(Parts.SIDEX_PART)
+			? nls.localize('sidex.hide', 'Hide Sidex')
+			: nls.localize('sidex.show', 'Show Sidex');
 	}
 
 	private _auxIcon(): string {
@@ -190,7 +192,9 @@ class SidexStatusBarContribution implements IWorkbenchContribution {
 	}
 
 	private _auxTooltip(): string {
-		return this.layoutService.isVisible(Parts.AUXILIARYBAR_PART) ? 'Hide Secondary Sidebar' : 'Show Secondary Sidebar';
+		return this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)
+			? nls.localize('sidex.hideSecondary', 'Hide Secondary Sidebar')
+			: nls.localize('sidex.showSecondary', 'Show Secondary Sidebar');
 	}
 }
 

@@ -1,3 +1,4 @@
+import { localize } from '../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  InlineEditController — Orchestrates the CMD+K inline edit flow:
  *  selection → floating input → stream edit → inline diff → accept/reject.
@@ -137,12 +138,12 @@ export class InlineEditController extends Disposable {
 		});
 
 		if (!resp.ok) {
-			throw new Error(`Server error: ${resp.status}`);
+			throw new Error(localize('sidex.inline.serverError', 'Server error: {0}', resp.status));
 		}
 
 		const reader = resp.body?.getReader();
 		if (!reader) {
-			throw new Error('No response body');
+			throw new Error(localize('sidex.inline.emptyResponse', 'No response body'));
 		}
 
 		const decoder = new TextDecoder();
@@ -174,7 +175,7 @@ export class InlineEditController extends Disposable {
 					if (chunk.type === 'text' && chunk.content) {
 						result += chunk.content;
 					} else if (chunk.type === 'error') {
-						throw new Error(chunk.error || 'Unknown server error');
+						throw new Error(chunk.error || localize('sidex.inline.unknownError', 'Unknown server error'));
 					}
 				} catch (e) {
 					if (e instanceof SyntaxError) {
@@ -265,14 +266,14 @@ export class InlineEditController extends Disposable {
 
 		const acceptBtn = document.createElement('button');
 		acceptBtn.className = 'sidex-inline-edit-accept';
-		acceptBtn.textContent = 'Accept';
-		acceptBtn.title = 'Accept edit (Enter)';
+		acceptBtn.textContent = localize('sidex.ui.accept.89713b', 'Accept');
+		acceptBtn.title = localize('sidex.ui.acceptEditEnter.78a736', 'Accept edit (Enter)');
 		acceptBtn.addEventListener('click', () => this.accept());
 
 		const rejectBtn = document.createElement('button');
 		rejectBtn.className = 'sidex-inline-edit-reject';
-		rejectBtn.textContent = 'Reject';
-		rejectBtn.title = 'Reject edit (Escape)';
+		rejectBtn.textContent = localize('sidex.ui.reject.ab604a', 'Reject');
+		rejectBtn.title = localize('sidex.ui.rejectEditEscape.3fa7ee', 'Reject edit (Escape)');
 		rejectBtn.addEventListener('click', () => this.reject());
 
 		widget.appendChild(acceptBtn);

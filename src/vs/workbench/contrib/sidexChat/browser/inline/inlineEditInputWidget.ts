@@ -1,3 +1,4 @@
+import { localize } from '../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  InlineEditInputWidget — A small floating input that appears below the
  *  user's code selection, styled to match Cursor's CMD+K prompt.
@@ -47,13 +48,13 @@ export class InlineEditInputWidget extends Disposable implements IContentWidget 
 
 		const label = document.createElement('span');
 		label.className = 'sidex-inline-edit-label';
-		label.textContent = 'Edit';
+		label.textContent = localize('sidex.ui.edit.464c4f', 'Edit');
 		row.appendChild(label);
 
 		this._input = document.createElement('input');
 		this._input.className = 'sidex-inline-edit-input';
 		this._input.type = 'text';
-		this._input.placeholder = 'Describe the change...';
+		this._input.placeholder = localize('sidex.ui.describeTheChange.cf26f4', 'Describe the change...');
 		this._input.setAttribute('autocomplete', 'off');
 		this._input.setAttribute('autocorrect', 'off');
 		this._input.setAttribute('spellcheck', 'false');
@@ -154,10 +155,10 @@ export class InlineEditInputWidget extends Disposable implements IContentWidget 
 	setLoading(loading: boolean): void {
 		this._input.disabled = loading;
 		if (loading) {
-			this._input.placeholder = 'Generating edit...';
+			this._input.placeholder = localize('sidex.ui.generatingEdit.3c6bb5', 'Generating edit...');
 			this._domNode.classList.add('loading');
 		} else {
-			this._input.placeholder = 'Describe the change...';
+			this._input.placeholder = localize('sidex.ui.describeTheChange.cf26f4', 'Describe the change...');
 			this._domNode.classList.remove('loading');
 		}
 	}

@@ -1,3 +1,5 @@
+import { localizedSettingOptions, settingOptionLabel } from '../settingLabels.js';
+import { localize } from '../../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Plugins section for SideX Settings panel.
  *  Browser automation settings and installed MCP server management.
@@ -30,13 +32,16 @@ export class PluginsSection implements SettingsSection {
 
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Plugins';
+		title.textContent = localize('sidex.ui.plugins.9514b7', 'Plugins');
 		container.appendChild(title);
 
 		const desc = document.createElement('div');
 		desc.className = 'sidex-settings-row-description';
 		desc.style.marginBottom = '16px';
-		desc.textContent = 'Extend SideX with community plugins';
+		desc.textContent = localize(
+			'sidex.ui.extendSidexWithCommunityPlugins.d0d742',
+			'Extend SideX with community plugins'
+		);
 		container.appendChild(desc);
 
 		this._renderBrowserSection(container);
@@ -46,20 +51,24 @@ export class PluginsSection implements SettingsSection {
 	private _renderBrowserSection(container: HTMLElement): void {
 		const sectionTitle = document.createElement('div');
 		sectionTitle.className = 'sidex-settings-section-title';
-		sectionTitle.textContent = 'Browser';
+		sectionTitle.textContent = localize('sidex.ui.browser.d31de1', 'Browser');
 		sectionTitle.style.marginTop = '24px';
 		container.appendChild(sectionTitle);
 
 		const card = document.createElement('div');
 		card.className = 'sidex-settings-card';
 
-		const autoRow = this._createRow(card, 'Browser Automation', 'Choose browser automation framework');
+		const autoRow = this._createRow(
+			card,
+			localize('sidex.ui.browserAutomation.9c9c34', 'Browser Automation'),
+			localize('sidex.ui.chooseBrowserAutomationFramework.b0030f', 'Choose browser automation framework')
+		);
 		this._addSelect(autoRow, ['Off', 'Playwright', 'Puppeteer'], 'Off', 'sidex.plugins.browserAutomation');
 
 		const localhostRow = this._createRow(
 			card,
-			'Show Localhost Links in Browser',
-			'Auto open localhost links detected in output'
+			localize('sidex.ui.showLocalhostLinksInBrowser.df1eb5', 'Show Localhost Links in Browser'),
+			localize('sidex.ui.autoOpenLocalhostLinksDetectedInOutput.567fbd', 'Auto open localhost links detected in output')
 		);
 		this._addToggle(localhostRow, true, 'sidex.plugins.showLocalhostLinks');
 
@@ -73,12 +82,12 @@ export class PluginsSection implements SettingsSection {
 		const sectionTitle = document.createElement('div');
 		sectionTitle.className = 'sidex-settings-section-title';
 		sectionTitle.style.margin = '0';
-		sectionTitle.textContent = 'Installed MCP Servers';
+		sectionTitle.textContent = localize('sidex.ui.installedMcpServers.c9a8e8', 'Installed MCP Servers');
 		sectionHeader.appendChild(sectionTitle);
 
 		const addBtn = document.createElement('button');
 		addBtn.className = 'sidex-settings-btn sidex-settings-btn-primary';
-		addBtn.textContent = '+ New MCP Server';
+		addBtn.textContent = localize('sidex.ui.newMcpServer.a701cc', '+ New MCP Server');
 		addBtn.addEventListener('click', () => this._toggleAddForm());
 		sectionHeader.appendChild(addBtn);
 
@@ -120,7 +129,10 @@ export class PluginsSection implements SettingsSection {
 		if (servers.length === 0) {
 			const empty = document.createElement('div');
 			empty.style.cssText = 'padding:16px;font-size:12px;color:var(--vscode-descriptionForeground);text-align:center;';
-			empty.textContent = 'No MCP servers installed. Click "New MCP Server" to add one.';
+			empty.textContent = localize(
+				'sidex.ui.noMcpServersInstalledClickNewMcp.8c2744',
+				'No MCP servers installed. Click "New MCP Server" to add one.'
+			);
 			this._mcpListEl.appendChild(empty);
 			return;
 		}
@@ -144,7 +156,12 @@ export class PluginsSection implements SettingsSection {
 
 			const toolsEl = document.createElement('div');
 			toolsEl.className = 'sidex-settings-row-description';
-			toolsEl.textContent = `${server.toolCount} tool${server.toolCount !== 1 ? 's' : ''} · ${server.status}`;
+			toolsEl.textContent = localize(
+				'sidex.mcp.toolCount',
+				'Tools: {0} · {1}',
+				server.toolCount,
+				settingOptionLabel(server.status)
+			);
 			info.appendChild(toolsEl);
 			left.appendChild(info);
 
@@ -169,7 +186,7 @@ export class PluginsSection implements SettingsSection {
 			const removeBtn = document.createElement('span');
 			removeBtn.className = 'codicon codicon-trash';
 			removeBtn.style.cssText = 'cursor:pointer;color:var(--vscode-descriptionForeground);';
-			removeBtn.title = 'Remove server';
+			removeBtn.title = localize('sidex.ui.removeServer.357349', 'Remove server');
 			removeBtn.addEventListener('click', () => {
 				if (this._invoke) {
 					this._invoke('mcp_remove_server', { name: server.name })
@@ -191,9 +208,13 @@ export class PluginsSection implements SettingsSection {
 
 	private _buildAddForm(formCard: HTMLElement): void {
 		const fields = [
-			{ label: 'Server Name', placeholder: 'my-server', key: 'name' },
-			{ label: 'Command', placeholder: 'npx -y @modelcontextprotocol/server-...', key: 'command' },
-			{ label: 'Arguments', placeholder: '--port 3000', key: 'args' }
+			{ label: localize('sidex.ui.serverName.bc4816', 'Server Name'), placeholder: 'my-server', key: 'name' },
+			{
+				label: localize('sidex.ui.command.713166', 'Command'),
+				placeholder: 'npx -y @modelcontextprotocol/server-...',
+				key: 'command'
+			},
+			{ label: localize('sidex.ui.arguments.7f8160', 'Arguments'), placeholder: '--port 3000', key: 'args' }
 		];
 
 		for (const field of fields) {
@@ -228,13 +249,13 @@ export class PluginsSection implements SettingsSection {
 
 		const cancelBtn = document.createElement('button');
 		cancelBtn.className = 'sidex-settings-btn';
-		cancelBtn.textContent = 'Cancel';
+		cancelBtn.textContent = localize('sidex.ui.cancel.19766e', 'Cancel');
 		cancelBtn.addEventListener('click', () => this._toggleAddForm());
 		btnRow.appendChild(cancelBtn);
 
 		const saveBtn = document.createElement('button');
 		saveBtn.className = 'sidex-settings-btn sidex-settings-btn-primary';
-		saveBtn.textContent = 'Add Server';
+		saveBtn.textContent = localize('sidex.ui.addServer.da8993', 'Add Server');
 		saveBtn.addEventListener('click', () => this._submitNewServer(formCard));
 		btnRow.appendChild(saveBtn);
 
@@ -337,7 +358,7 @@ export class PluginsSection implements SettingsSection {
 	}
 
 	private _addSelect(row: HTMLElement, options: string[], defaultValue: string, settingKey: string): HTMLElement {
-		const dropdown = createCustomDropdown(options, defaultValue, newValue => {
+		const dropdown = createCustomDropdown(localizedSettingOptions(options), defaultValue, newValue => {
 			if (this._invoke) {
 				this._invoke('settings_update', { key: settingKey, value: JSON.stringify(newValue), scope: 'user' }).catch(
 					() => {}

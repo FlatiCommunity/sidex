@@ -1,3 +1,4 @@
+import { localize } from '../../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Hooks section for SideX Settings panel.
  *  Manage lifecycle hooks that trigger automated actions on agent events.
@@ -19,11 +20,11 @@ interface HookItem {
 const HOOK_EVENTS = ['on_file_save', 'on_commit', 'on_agent_start', 'on_agent_end', 'before_tool_call'];
 
 const EVENT_LABELS: Record<string, string> = {
-	on_file_save: 'On File Save',
-	on_commit: 'On Commit',
-	on_agent_start: 'On Agent Start',
-	on_agent_end: 'On Agent End',
-	before_tool_call: 'Before Tool Call'
+	on_file_save: localize('hook.on_file_save', 'On File Save'),
+	on_commit: localize('hook.on_commit', 'On Commit'),
+	on_agent_start: localize('hook.on_agent_start', 'On Agent Start'),
+	on_agent_end: localize('hook.on_agent_end', 'On Agent End'),
+	before_tool_call: localize('hook.before_tool_call', 'Before Tool Call')
 };
 
 export class HooksSection implements SettingsSection {
@@ -41,13 +42,16 @@ export class HooksSection implements SettingsSection {
 
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Hooks';
+		title.textContent = localize('sidex.ui.hooks.d412a0', 'Hooks');
 		container.appendChild(title);
 
 		const desc = document.createElement('div');
 		desc.className = 'sidex-settings-row-description';
 		desc.style.marginBottom = '16px';
-		desc.textContent = 'Automate actions triggered by agent lifecycle events';
+		desc.textContent = localize(
+			'sidex.ui.automateActionsTriggeredByAgentLifecycleEvents.0f456a',
+			'Automate actions triggered by agent lifecycle events'
+		);
 		container.appendChild(desc);
 
 		await this._loadHooks();
@@ -76,7 +80,7 @@ export class HooksSection implements SettingsSection {
 
 		const btn = document.createElement('button');
 		btn.className = 'sidex-settings-btn sidex-settings-btn-primary';
-		btn.textContent = '+ Add Hook';
+		btn.textContent = localize('sidex.ui.addHook.b12d4c', '+ Add Hook');
 		btn.addEventListener('click', () => this._toggleAddForm());
 		wrapper.appendChild(btn);
 
@@ -95,7 +99,7 @@ export class HooksSection implements SettingsSection {
 		const eventLeft = document.createElement('div');
 		const eventLabel = document.createElement('div');
 		eventLabel.className = 'sidex-settings-row-label';
-		eventLabel.textContent = 'Event Trigger';
+		eventLabel.textContent = localize('sidex.ui.eventTrigger.f9d53e', 'Event Trigger');
 		eventLeft.appendChild(eventLabel);
 		eventRow.appendChild(eventLeft);
 
@@ -117,15 +121,15 @@ export class HooksSection implements SettingsSection {
 		const typeLeft = document.createElement('div');
 		const typeLabel = document.createElement('div');
 		typeLabel.className = 'sidex-settings-row-label';
-		typeLabel.textContent = 'Action Type';
+		typeLabel.textContent = localize('sidex.ui.actionType.4a7870', 'Action Type');
 		typeLeft.appendChild(typeLabel);
 		typeRow.appendChild(typeLeft);
 
 		const typeAction = document.createElement('div');
 		typeAction.className = 'sidex-settings-row-action';
 		const typeOptions = [
-			{ value: 'shell_command', label: 'Shell Command' },
-			{ value: 'script', label: 'Script' }
+			{ value: 'shell_command', label: localize('sidex.ui.shellCommand.52d381', 'Shell Command') },
+			{ value: 'script', label: localize('sidex.ui.script.102acc', 'Script') }
 		];
 		const typeSelect = createCustomDropdown(typeOptions, 'shell_command', () => {});
 		typeSelect.dataset.field = 'actionType';
@@ -139,7 +143,7 @@ export class HooksSection implements SettingsSection {
 		const cmdLeft = document.createElement('div');
 		const cmdLabel = document.createElement('div');
 		cmdLabel.className = 'sidex-settings-row-label';
-		cmdLabel.textContent = 'Command';
+		cmdLabel.textContent = localize('sidex.ui.command.713166', 'Command');
 		cmdLeft.appendChild(cmdLabel);
 		cmdRow.appendChild(cmdLeft);
 
@@ -163,13 +167,13 @@ export class HooksSection implements SettingsSection {
 
 		const cancelBtn = document.createElement('button');
 		cancelBtn.className = 'sidex-settings-btn';
-		cancelBtn.textContent = 'Cancel';
+		cancelBtn.textContent = localize('sidex.ui.cancel.19766e', 'Cancel');
 		cancelBtn.addEventListener('click', () => this._toggleAddForm());
 		btnRow.appendChild(cancelBtn);
 
 		const saveBtn = document.createElement('button');
 		saveBtn.className = 'sidex-settings-btn sidex-settings-btn-primary';
-		saveBtn.textContent = 'Save Hook';
+		saveBtn.textContent = localize('sidex.ui.saveHook.453b06', 'Save Hook');
 		saveBtn.addEventListener('click', () => this._submitNewHook(card));
 		btnRow.appendChild(saveBtn);
 
@@ -187,12 +191,12 @@ export class HooksSection implements SettingsSection {
 
 			const emptyLabel = document.createElement('div');
 			emptyLabel.style.cssText = 'font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:12px;';
-			emptyLabel.textContent = 'No hooks configured yet.';
+			emptyLabel.textContent = localize('sidex.ui.noHooksConfiguredYet.769f2b', 'No hooks configured yet.');
 			empty.appendChild(emptyLabel);
 
 			const newBtn = document.createElement('button');
 			newBtn.className = 'sidex-settings-btn';
-			newBtn.textContent = 'New Hook';
+			newBtn.textContent = localize('sidex.ui.newHook.2857df', 'New Hook');
 			newBtn.addEventListener('click', () => this._toggleAddForm());
 			empty.appendChild(newBtn);
 
@@ -210,7 +214,7 @@ export class HooksSection implements SettingsSection {
 
 				const descEl = document.createElement('div');
 				descEl.className = 'sidex-settings-row-description';
-				descEl.textContent = `${hook.actionType === 'shell_command' ? 'Shell' : 'Script'}: ${hook.command}`;
+				descEl.textContent = `${hook.actionType === 'shell_command' ? localize('sidex.ui.shell.a73328', 'Shell') : localize('sidex.ui.script.102acc', 'Script')}: ${hook.command}`;
 				left.appendChild(descEl);
 				row.appendChild(left);
 
@@ -231,7 +235,7 @@ export class HooksSection implements SettingsSection {
 				const removeBtn = document.createElement('span');
 				removeBtn.className = 'codicon codicon-trash';
 				removeBtn.style.cssText = 'cursor:pointer;color:var(--vscode-descriptionForeground);';
-				removeBtn.title = 'Remove hook';
+				removeBtn.title = localize('sidex.ui.removeHook.f0079a', 'Remove hook');
 				removeBtn.addEventListener('click', () => {
 					if (this._invoke) {
 						this._invoke('hooks_remove', { id: hook.id })

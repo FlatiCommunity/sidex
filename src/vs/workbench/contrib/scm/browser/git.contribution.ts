@@ -15,6 +15,7 @@ import { ThemeIcon } from '../../../../base/common/themables.js';
 import { basename, relativePath } from '../../../../base/common/resources.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
+import { fromNow } from '../../../../base/common/date.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import type { IWorkbenchContribution } from '../../../common/contributions.js';
 import {
@@ -45,7 +46,13 @@ import { MenuId, MenuRegistry } from '../../../../platform/actions/common/action
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
-import { FileSystemProviderCapabilities, FileType, FilePermission, createFileSystemProviderError, FileSystemProviderErrorCode } from '../../../../platform/files/common/files.js';
+import {
+	FileSystemProviderCapabilities,
+	FileType,
+	FilePermission,
+	createFileSystemProviderError,
+	FileSystemProviderErrorCode
+} from '../../../../platform/files/common/files.js';
 import type {
 	IFileSystemProvider,
 	IStat,
@@ -66,7 +73,7 @@ import {
 import { registerColor } from '../../../../platform/theme/common/colorRegistry.js';
 import { historyItemRefColor, historyItemRemoteRefColor } from './scmHistory.js';
 import { GIT_ORIGINAL_SCHEME, gitOriginalUri, gitOriginalRequest } from './gitOriginalUri.js';
-import { localize } from '../../../../nls.js';
+import { getNLSLanguage, localize } from '../../../../nls.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
 
 // ─── Tauri invoke() bridge ──────────────────────────────────────────────────
@@ -160,9 +167,13 @@ class TauriGitOriginalFileProvider implements IFileSystemProvider {
 		const request = gitOriginalRequest(resource, URI.file(this._workspaceRoot));
 		if (request.reference === 'EMPTY') return new Uint8Array();
 		const invoke = await getTauriInvoke();
-		if (!invoke) throw createFileSystemProviderError('Git backend unavailable', FileSystemProviderErrorCode.Unavailable);
+		if (!invoke)
+			throw createFileSystemProviderError(
+				localize('git.backendUnavailable', 'Git backend unavailable'),
+				FileSystemProviderErrorCode.Unavailable
+			);
 		try {
-			return new Uint8Array(await invoke('git_show', request) as number[]);
+			return new Uint8Array((await invoke('git_show', request)) as number[]);
 		} catch (error) {
 			throw createFileSystemProviderError(String(error), FileSystemProviderErrorCode.FileNotFound);
 		}
@@ -199,12 +210,15 @@ class TauriGitResource implements ISCMResource {
 			this.multiDiffEditorModifiedUri = sourceUri;
 		} else {
 			const originalFile = _originalPath ? URI.joinPath(_workspaceRootUri, _originalPath) : sourceUri;
-			const reference = _status === 'added' ? 'EMPTY' : (_staged ? 'HEAD' : 'INDEX');
+			const reference = _status === 'added' ? 'EMPTY' : _staged ? 'HEAD' : 'INDEX';
 			this.command = { id: 'git.openDiff', title: localize('git.openChanges', 'Open Changes') };
 			this.multiDiffEditorOriginalUri = gitOriginalUri(originalFile, _workspaceRootUri, reference);
-			this.multiDiffEditorModifiedUri = _status === 'deleted'
-				? gitOriginalUri(sourceUri, _workspaceRootUri, 'EMPTY')
-				: _staged ? gitOriginalUri(sourceUri, _workspaceRootUri, 'INDEX') : sourceUri;
+			this.multiDiffEditorModifiedUri =
+				_status === 'deleted'
+					? gitOriginalUri(sourceUri, _workspaceRootUri, 'EMPTY')
+					: _staged
+						? gitOriginalUri(sourceUri, _workspaceRootUri, 'INDEX')
+						: sourceUri;
 		}
 	}
 
@@ -227,16 +241,37 @@ class TauriGitResource implements ISCMResource {
 	private static _decorationForStatus(status: string): ISCMResourceDecorations {
 		switch (status) {
 			case 'modified':
-				return { tooltip: 'Modified', icon: ThemeIcon.fromId('diff-modified'), faded: false };
+				return {
+					tooltip: localize('sidex.ui.modified.e8ce5d', 'Modified'),
+					icon: ThemeIcon.fromId('diff-modified'),
+					faded: false
+				};
 			case 'added':
 			case 'new file':
-				return { tooltip: 'Added', icon: ThemeIcon.fromId('diff-added'), faded: false };
+				return {
+					tooltip: localize('sidex.ui.added.6b02e0', 'Added'),
+					icon: ThemeIcon.fromId('diff-added'),
+					faded: false
+				};
 			case 'deleted':
-				return { tooltip: 'Deleted', icon: ThemeIcon.fromId('diff-removed'), strikeThrough: true, faded: false };
+				return {
+					tooltip: localize('sidex.ui.deleted.b48ff3', 'Deleted'),
+					icon: ThemeIcon.fromId('diff-removed'),
+					strikeThrough: true,
+					faded: false
+				};
 			case 'renamed':
-				return { tooltip: 'Renamed', icon: ThemeIcon.fromId('diff-renamed'), faded: false };
+				return {
+					tooltip: localize('sidex.ui.renamed.05487a', 'Renamed'),
+					icon: ThemeIcon.fromId('diff-renamed'),
+					faded: false
+				};
 			case 'untracked':
-				return { tooltip: 'Untracked', icon: ThemeIcon.fromId('diff-added'), faded: false };
+				return {
+					tooltip: localize('sidex.ui.untracked.c7ba54', 'Untracked'),
+					icon: ThemeIcon.fromId('diff-added'),
+					faded: false
+				};
 			default:
 				return { tooltip: status, faded: false };
 		}
@@ -469,14 +504,14 @@ class TauriGitHistoryProvider implements ISCMHistoryProvider {
 				}
 
 				const authorDate = new Date(entry.date);
-				const dateString = authorDate.toLocaleString(undefined, {
+				const dateString = authorDate.toLocaleString(getNLSLanguage(), {
 					year: 'numeric',
 					month: 'long',
 					day: 'numeric',
 					hour: 'numeric',
 					minute: 'numeric'
 				});
-				const relativeDate = this._fromNow(authorDate);
+				const relativeDate = fromNow(authorDate, true, true);
 
 				const tooltip: MarkdownString[] = [];
 
@@ -500,16 +535,20 @@ class TauriGitHistoryProvider implements ISCMHistoryProvider {
 				if (entry.files_changed !== undefined) {
 					const statsMd = new MarkdownString('', { supportThemeIcons: true, supportHtml: true });
 					const fc = entry.files_changed;
-					statsMd.appendMarkdown(`<span>${fc === 1 ? `${fc} file changed` : `${fc} files changed`}</span>`);
+					statsMd.appendText(localize('git.filesChanged', 'Files changed: {0}', fc));
 					if (entry.insertions) {
 						statsMd.appendMarkdown(
-							`,&nbsp;<span style="color:var(--vscode-scmGraph-historyItemHoverAdditionsForeground);">${entry.insertions} insertion${entry.insertions === 1 ? '' : 's'}(+)</span>`
+							',&nbsp;<span style="color:var(--vscode-scmGraph-historyItemHoverAdditionsForeground);">'
 						);
+						statsMd.appendText(localize('git.insertions', 'Insertions: {0} (+)', entry.insertions));
+						statsMd.appendMarkdown('</span>');
 					}
 					if (entry.deletions) {
 						statsMd.appendMarkdown(
-							`,&nbsp;<span style="color:var(--vscode-scmGraph-historyItemHoverDeletionsForeground);">${entry.deletions} deletion${entry.deletions === 1 ? '' : 's'}(-)</span>`
+							',&nbsp;<span style="color:var(--vscode-scmGraph-historyItemHoverDeletionsForeground);">'
 						);
+						statsMd.appendText(localize('git.deletions', 'Deletions: {0} (-)', entry.deletions));
+						statsMd.appendMarkdown('</span>');
 					}
 					statsMd.appendMarkdown('\n\n---\n\n');
 					tooltip.push(statsMd);
@@ -615,31 +654,6 @@ class TauriGitHistoryProvider implements ISCMHistoryProvider {
 		return undefined;
 	}
 
-	private _fromNow(date: Date): string {
-		const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-		if (seconds < 60) {
-			return 'just now';
-		}
-		const minutes = Math.floor(seconds / 60);
-		if (minutes < 60) {
-			return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
-		}
-		const hours = Math.floor(minutes / 60);
-		if (hours < 24) {
-			return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-		}
-		const days = Math.floor(hours / 24);
-		if (days < 30) {
-			return `${days} day${days === 1 ? '' : 's'} ago`;
-		}
-		const months = Math.floor(days / 30);
-		if (months < 12) {
-			return `${months} month${months === 1 ? '' : 's'} ago`;
-		}
-		const years = Math.floor(months / 12);
-		return `${years} year${years === 1 ? '' : 's'} ago`;
-	}
-
 	async resolveHistoryItemRefsCommonAncestor(
 		_historyItemRefs: string[],
 		_token?: CancellationToken
@@ -714,7 +728,7 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 
 	readonly acceptInputCommand: Command = {
 		id: 'git.commit',
-		title: 'Commit'
+		title: localize('sidex.ui.commit.82a9c4', 'Commit')
 	};
 
 	private readonly _mergeGroup: TauriGitResourceGroup;
@@ -751,9 +765,27 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 		}
 		this.inputBoxTextModel = model;
 
-		this._mergeGroup = new TauriGitResourceGroup('merge', 'Merge Changes', this, uriIdentityService, true);
-		this._stagedGroup = new TauriGitResourceGroup('staged', 'Staged Changes', this, uriIdentityService, true);
-		this._changesGroup = new TauriGitResourceGroup('changes', 'Changes', this, uriIdentityService, false);
+		this._mergeGroup = new TauriGitResourceGroup(
+			'merge',
+			localize('sidex.ui.mergeChanges.c08f87', 'Merge Changes'),
+			this,
+			uriIdentityService,
+			true
+		);
+		this._stagedGroup = new TauriGitResourceGroup(
+			'staged',
+			localize('sidex.ui.stagedChanges.b5ff19', 'Staged Changes'),
+			this,
+			uriIdentityService,
+			true
+		);
+		this._changesGroup = new TauriGitResourceGroup(
+			'changes',
+			localize('sidex.ui.changes.bbd4b6', 'Changes'),
+			this,
+			uriIdentityService,
+			false
+		);
 		this.groups = [this._mergeGroup, this._stagedGroup, this._changesGroup];
 
 		this._register(this._onDidChangeResourceGroups);
@@ -820,11 +852,17 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 		for (const change of status.changes) {
 			const fileUri = URI.joinPath(this.rootUri, change.path);
 			if (isConflictStatus(change.status)) {
-				mergeResources.push(new TauriGitResource(this._mergeGroup, fileUri, change.status, false, this.rootUri, change.original_path));
+				mergeResources.push(
+					new TauriGitResource(this._mergeGroup, fileUri, change.status, false, this.rootUri, change.original_path)
+				);
 			} else if (change.staged) {
-				stagedResources.push(new TauriGitResource(this._stagedGroup, fileUri, change.status, true, this.rootUri, change.original_path));
+				stagedResources.push(
+					new TauriGitResource(this._stagedGroup, fileUri, change.status, true, this.rootUri, change.original_path)
+				);
 			} else {
-				changesResources.push(new TauriGitResource(this._changesGroup, fileUri, change.status, false, this.rootUri, change.original_path));
+				changesResources.push(
+					new TauriGitResource(this._changesGroup, fileUri, change.status, false, this.rootUri, change.original_path)
+				);
 			}
 		}
 
@@ -863,12 +901,15 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 				{
 					id: 'git.checkoutTo',
 					title: `$(git-branch) ${this._branch}${total > 0 ? '*' : ''}`,
-					tooltip: `Branch: ${this._branch}${total > 0 ? ' (modified)' : ''}`
+					tooltip:
+						total > 0
+							? localize('git.branchModified', 'Branch: {0} (modified)', this._branch)
+							: localize('git.branch', 'Branch: {0}', this._branch)
 				},
 				{
 					id: 'git.sync',
 					title: ahead > 0 || behind > 0 ? `$(sync) ${behind}$(arrow-down) ${ahead}$(arrow-up)` : '$(sync)',
-					tooltip: 'Synchronize Changes'
+					tooltip: localize('sidex.ui.synchronizeChanges.e8cd38', 'Synchronize Changes')
 				}
 			],
 			undefined
@@ -884,9 +925,9 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 					command: { id: 'git.sync', title: syncLabel },
 					secondaryCommands: [
 						[
-							{ id: 'git.sync', title: 'Sync' },
-							{ id: 'git.push', title: 'Push' },
-							{ id: 'git.pull', title: 'Pull' }
+							{ id: 'git.sync', title: localize('sidex.ui.sync.8d261a', 'Sync') },
+							{ id: 'git.push', title: localize('sidex.ui.push.731ce7', 'Push') },
+							{ id: 'git.pull', title: localize('sidex.ui.pull.b66d04', 'Pull') }
 						]
 					],
 					enabled: true
@@ -896,15 +937,15 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 		} else {
 			this._actionButton.set(
 				{
-					command: { id: 'git.commit', title: '$(check) Commit' },
+					command: { id: 'git.commit', title: localize('sidex.ui.checkCommit.9b345c', '$(check) Commit') },
 					secondaryCommands: [
 						[
-							{ id: 'git.commit', title: 'Commit' },
-							{ id: 'git.commitAmend', title: 'Commit (Amend)' }
+							{ id: 'git.commit', title: localize('sidex.ui.commit.82a9c4', 'Commit') },
+							{ id: 'git.commitAmend', title: localize('sidex.ui.commitAmend.200083', 'Commit (Amend)') }
 						],
 						[
-							{ id: 'git.commitAndPush', title: 'Commit & Push' },
-							{ id: 'git.commitAndSync', title: 'Commit & Sync' }
+							{ id: 'git.commitAndPush', title: localize('sidex.ui.commitPush.94e965', 'Commit & Push') },
+							{ id: 'git.commitAndSync', title: localize('sidex.ui.commitSync.80ff7f', 'Commit & Sync') }
 						]
 					],
 					enabled: true
@@ -922,52 +963,52 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 const gitDecorationModifiedFg = registerColor(
 	'gitDecoration.modifiedResourceForeground',
 	{ dark: '#E2C08D', light: '#895503', hcDark: '#E2C08D', hcLight: '#895503' },
-	'Color for modified git resources.'
+	localize('sidex.ui.colorForModifiedGitResources.802f59', 'Color for modified git resources.')
 );
 const gitDecorationDeletedFg = registerColor(
 	'gitDecoration.deletedResourceForeground',
 	{ dark: '#c74e39', light: '#ad0707', hcDark: '#c74e39', hcLight: '#ad0707' },
-	'Color for deleted git resources.'
+	localize('sidex.ui.colorForDeletedGitResources.f4235b', 'Color for deleted git resources.')
 );
 const gitDecorationUntrackedFg = registerColor(
 	'gitDecoration.untrackedResourceForeground',
 	{ dark: '#73C991', light: '#007100', hcDark: '#73C991', hcLight: '#007100' },
-	'Color for untracked git resources.'
+	localize('sidex.ui.colorForUntrackedGitResources.e9a437', 'Color for untracked git resources.')
 );
 const gitDecorationAddedFg = registerColor(
 	'gitDecoration.addedResourceForeground',
 	{ dark: '#81b88b', light: '#587c0c', hcDark: '#a1e3ad', hcLight: '#374e06' },
-	'Color for added git resources.'
+	localize('sidex.ui.colorForAddedGitResources.fb0a65', 'Color for added git resources.')
 );
 const gitDecorationRenamedFg = registerColor(
 	'gitDecoration.renamedResourceForeground',
 	{ dark: '#73C991', light: '#007100', hcDark: '#73C991', hcLight: '#007100' },
-	'Color for renamed git resources.'
+	localize('sidex.ui.colorForRenamedGitResources.56e3dd', 'Color for renamed git resources.')
 );
 const _gitDecorationIgnoredFg = registerColor(
 	'gitDecoration.ignoredResourceForeground',
 	{ dark: '#8C8C8C', light: '#8E8E90', hcDark: '#A7A8A9', hcLight: '#8e8e90' },
-	'Color for ignored git resources.'
+	localize('sidex.ui.colorForIgnoredGitResources.e2bad5', 'Color for ignored git resources.')
 );
 const gitDecorationStageModifiedFg = registerColor(
 	'gitDecoration.stageModifiedResourceForeground',
 	{ dark: '#E2C08D', light: '#895503', hcDark: '#E2C08D', hcLight: '#895503' },
-	'Color for staged modified git resources.'
+	localize('sidex.ui.colorForStagedModifiedGitResources.0e156d', 'Color for staged modified git resources.')
 );
 const gitDecorationStageDeletedFg = registerColor(
 	'gitDecoration.stageDeletedResourceForeground',
 	{ dark: '#c74e39', light: '#ad0707', hcDark: '#c74e39', hcLight: '#ad0707' },
-	'Color for staged deleted git resources.'
+	localize('sidex.ui.colorForStagedDeletedGitResources.870219', 'Color for staged deleted git resources.')
 );
 const gitDecorationConflictingFg = registerColor(
 	'gitDecoration.conflictingResourceForeground',
 	{ dark: '#e4676b', light: '#ad0707', hcDark: '#c74e39', hcLight: '#ad0707' },
-	'Color for conflicting git resources.'
+	localize('sidex.ui.colorForConflictingGitResources.995352', 'Color for conflicting git resources.')
 );
 const _gitDecorationSubmoduleFg = registerColor(
 	'gitDecoration.submoduleResourceForeground',
 	{ dark: '#8db9e2', light: '#1258a7', hcDark: '#8db9e2', hcLight: '#1258a7' },
-	'Color for submodule git resources.'
+	localize('sidex.ui.colorForSubmoduleGitResources.2d4c89', 'Color for submodule git resources.')
 );
 
 // ─── Git File Decoration Provider ───────────────────────────────────────────
@@ -1006,7 +1047,9 @@ class TauriGitDecorationProvider implements IDecorationsProvider {
 				return {
 					letter: 'M',
 					color: entry.staged ? gitDecorationStageModifiedFg : gitDecorationModifiedFg,
-					tooltip: entry.staged ? 'Index Modified' : 'Modified',
+					tooltip: entry.staged
+						? localize('sidex.ui.indexModified.26f13b', 'Index Modified')
+						: localize('sidex.ui.modified.e8ce5d', 'Modified'),
 					strikethrough: false,
 					bubble: true
 				};
@@ -1015,7 +1058,9 @@ class TauriGitDecorationProvider implements IDecorationsProvider {
 				return {
 					letter: 'A',
 					color: gitDecorationAddedFg,
-					tooltip: entry.staged ? 'Index Added' : 'Added',
+					tooltip: entry.staged
+						? localize('sidex.ui.indexAdded.4bc49b', 'Index Added')
+						: localize('sidex.ui.added.6b02e0', 'Added'),
 					strikethrough: false,
 					bubble: true
 				};
@@ -1023,7 +1068,9 @@ class TauriGitDecorationProvider implements IDecorationsProvider {
 				return {
 					letter: 'D',
 					color: entry.staged ? gitDecorationStageDeletedFg : gitDecorationDeletedFg,
-					tooltip: entry.staged ? 'Index Deleted' : 'Deleted',
+					tooltip: entry.staged
+						? localize('sidex.ui.indexDeleted.606a5a', 'Index Deleted')
+						: localize('sidex.ui.deleted.b48ff3', 'Deleted'),
 					strikethrough: false,
 					bubble: false
 				};
@@ -1031,7 +1078,7 @@ class TauriGitDecorationProvider implements IDecorationsProvider {
 				return {
 					letter: 'R',
 					color: gitDecorationRenamedFg,
-					tooltip: 'Index Renamed',
+					tooltip: localize('sidex.ui.indexRenamed.0fab3d', 'Index Renamed'),
 					strikethrough: false,
 					bubble: true
 				};
@@ -1039,7 +1086,7 @@ class TauriGitDecorationProvider implements IDecorationsProvider {
 				return {
 					letter: 'U',
 					color: gitDecorationUntrackedFg,
-					tooltip: 'Untracked',
+					tooltip: localize('sidex.ui.untracked.c7ba54', 'Untracked'),
 					strikethrough: false,
 					bubble: true
 				};
@@ -1048,7 +1095,7 @@ class TauriGitDecorationProvider implements IDecorationsProvider {
 				return {
 					letter: '!',
 					color: gitDecorationConflictingFg,
-					tooltip: 'Conflict',
+					tooltip: localize('sidex.ui.conflict.014659', 'Conflict'),
 					strikethrough: false,
 					bubble: true
 				};
@@ -1136,7 +1183,12 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 		this._register(provider);
 
 		// Set the commit message placeholder
-		repository.input.placeholder = localize('git.commitMessage', 'Message ({0}Enter to commit on "{1}")', isMacintosh ? '⌘' : 'Ctrl+', provider.name);
+		repository.input.placeholder = localize(
+			'git.commitMessage',
+			'Message ({0}Enter to commit on "{1}")',
+			isMacintosh ? '⌘' : 'Ctrl+',
+			provider.name
+		);
 
 		this._registerDiffCommands(provider, rootPath);
 		this._registerCommitCommand(provider, rootPath);
@@ -1193,11 +1245,11 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 						return;
 					}
 
-					const relPath = relativePath(provider.rootUri, sourceUri) ?? sourceUri.path;
-					const originalUri = resource?.multiDiffEditorOriginalUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'INDEX');
+					const originalUri =
+						resource?.multiDiffEditorOriginalUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'INDEX');
 					const modifiedUri = resource?.multiDiffEditorModifiedUri ?? sourceUri;
 					const fileName = basename(sourceUri);
-					const title = `${fileName} (Working Tree)`;
+					const title = localize('git.workingTreeTitle', '{0} (Working Tree)', fileName);
 
 					await commandService.executeCommand('vscode.diff', originalUri, modifiedUri, title);
 				} catch (err) {
@@ -1220,11 +1272,12 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 						return;
 					}
 
-					const relPath = relativePath(provider.rootUri, sourceUri) ?? sourceUri.path;
-					const originalUri = resource?.multiDiffEditorOriginalUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'HEAD');
-					const modifiedUri = resource?.multiDiffEditorModifiedUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'INDEX');
+					const originalUri =
+						resource?.multiDiffEditorOriginalUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'HEAD');
+					const modifiedUri =
+						resource?.multiDiffEditorModifiedUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'INDEX');
 					const fileName = basename(sourceUri);
-					const title = `${fileName} (Index)`;
+					const title = localize('git.indexTitle', '{0} (Index)', fileName);
 
 					await commandService.executeCommand('vscode.diff', originalUri, modifiedUri, title);
 				} catch (err) {
@@ -1306,10 +1359,14 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 						if (change.status === 'untracked' || change.status === 'added') {
 							await commandService.executeCommand('vscode.open', fileUri);
 						} else {
-							const relPath = change.path;
 							const originalUri = gitOriginalUri(fileUri, provider.rootUri, change.staged ? 'HEAD' : 'INDEX');
 							const fileName = basename(fileUri);
-							await commandService.executeCommand('vscode.diff', originalUri, fileUri, `${fileName} (Working Tree)`);
+							await commandService.executeCommand(
+								'vscode.diff',
+								originalUri,
+								fileUri,
+								localize('git.workingTreeTitle', '{0} (Working Tree)', fileName)
+							);
 						}
 					}
 				} catch (err) {
@@ -1436,7 +1493,10 @@ CommandsRegistry.registerCommand('git.init', async () => {
 		if (folders && folders.length > 0) {
 			targetPath = folders[0];
 		} else {
-			const selected = await open({ directory: true, title: 'Initialize Git Repository' });
+			const selected = await open({
+				directory: true,
+				title: localize('sidex.ui.initializeGitRepository.232fb6', 'Initialize Git Repository')
+			});
 			if (selected && typeof selected === 'string') {
 				targetPath = selected;
 			}
@@ -1541,14 +1601,20 @@ async function doGitClone(): Promise<void> {
 		}
 
 		const url = await quickInputService.input({
-			placeHolder: 'Repository URL to clone (e.g. https://github.com/user/repo.git)'
+			placeHolder: localize(
+				'sidex.ui.repositoryUrlToCloneEGHttps.3b7f35',
+				'Repository URL to clone (e.g. https://github.com/user/repo.git)'
+			)
 		});
 		if (!url) {
 			return;
 		}
 
 		const { open } = await import('@tauri-apps/plugin-dialog');
-		const dest = await open({ directory: true, title: 'Choose destination folder for clone' });
+		const dest = await open({
+			directory: true,
+			title: localize('sidex.ui.chooseDestinationFolderForClone.0d7c33', 'Choose destination folder for clone')
+		});
 		if (!dest || typeof dest !== 'string') {
 			return;
 		}
@@ -1617,12 +1683,24 @@ CommandsRegistry.registerCommand('git.checkoutTo', async () => {
 
 		const items: any[] = [];
 
-		items.push({ label: '$(add) Create new branch...', branch: '__create__', alwaysShow: true });
-		items.push({ label: '$(add) Create new branch from...', branch: '__create_from__', alwaysShow: true });
-		items.push({ label: '$(git-compare) Checkout detached...', branch: '__detached__', alwaysShow: true });
+		items.push({
+			label: localize('sidex.ui.addCreateNewBranch.dfb0ab', '$(add) Create new branch...'),
+			branch: '__create__',
+			alwaysShow: true
+		});
+		items.push({
+			label: localize('sidex.ui.addCreateNewBranchFrom.0e0645', '$(add) Create new branch from...'),
+			branch: '__create_from__',
+			alwaysShow: true
+		});
+		items.push({
+			label: localize('sidex.ui.gitCompareCheckoutDetached.2389ec', '$(git-compare) Checkout detached...'),
+			branch: '__detached__',
+			alwaysShow: true
+		});
 
 		if (branchOutput) {
-			items.push({ type: 'separator', label: 'branches' });
+			items.push({ type: 'separator', label: localize('sidex.ui.branches.dce190', 'branches') });
 			for (const line of branchOutput.split('\n')) {
 				const parts = line.split('|');
 				const name = parts[0] || '';
@@ -1639,7 +1717,7 @@ CommandsRegistry.registerCommand('git.checkoutTo', async () => {
 		}
 
 		if (remoteOutput) {
-			items.push({ type: 'separator', label: 'remote branches' });
+			items.push({ type: 'separator', label: localize('sidex.ui.remoteBranches.4236af', 'remote branches') });
 			for (const line of remoteOutput.split('\n')) {
 				const parts = line.split('|');
 				const name = parts[0] || '';
@@ -1673,7 +1751,7 @@ CommandsRegistry.registerCommand('git.checkoutTo', async () => {
 		}
 
 		if (tagsOutput) {
-			items.push({ type: 'separator', label: 'tags' });
+			items.push({ type: 'separator', label: localize('sidex.ui.tags.978c2f', 'tags') });
 			for (const line of tagsOutput.split('\n')) {
 				const parts = line.split('|');
 				const name = parts[0] || '';
@@ -1690,7 +1768,7 @@ CommandsRegistry.registerCommand('git.checkoutTo', async () => {
 		}
 
 		const picked = await quickInputService.pick(items, {
-			placeHolder: 'Select a branch or tag to checkout',
+			placeHolder: localize('sidex.ui.selectABranchOrTagToCheckout.037c1c', 'Select a branch or tag to checkout'),
 			matchOnDescription: true,
 			matchOnDetail: true
 		});
@@ -1700,23 +1778,31 @@ CommandsRegistry.registerCommand('git.checkoutTo', async () => {
 		}
 
 		if (picked.branch === '__create__') {
-			const name = await quickInputService.input({ placeHolder: 'Branch name' });
+			const name = await quickInputService.input({
+				placeHolder: localize('sidex.ui.branchName.06f6bb', 'Branch name')
+			});
 			if (!name) {
 				return;
 			}
 			await invoke('git_run', { path, args: ['checkout', '-b', name] });
 		} else if (picked.branch === '__create_from__') {
-			const base = await quickInputService.input({ placeHolder: 'Base branch or commit' });
+			const base = await quickInputService.input({
+				placeHolder: localize('sidex.ui.baseBranchOrCommit.7bdcbe', 'Base branch or commit')
+			});
 			if (!base) {
 				return;
 			}
-			const name = await quickInputService.input({ placeHolder: 'New branch name' });
+			const name = await quickInputService.input({
+				placeHolder: localize('sidex.ui.newBranchName.514cee', 'New branch name')
+			});
 			if (!name) {
 				return;
 			}
 			await invoke('git_run', { path, args: ['checkout', '-b', name, base] });
 		} else if (picked.branch === '__detached__') {
-			const ref = await quickInputService.input({ placeHolder: 'Commit hash, tag, or ref to checkout' });
+			const ref = await quickInputService.input({
+				placeHolder: localize('sidex.ui.commitHashTagOrRefToCheckout.673ccc', 'Commit hash, tag, or ref to checkout')
+			});
 			if (!ref) {
 				return;
 			}
@@ -1737,7 +1823,7 @@ CommandsRegistry.registerCommand('git.createBranch', async () => {
 	if (!path) {
 		return;
 	}
-	const name = window.prompt('New branch name:');
+	const name = window.prompt(localize('sidex.ui.newBranchName.caee60', 'New branch name:'));
 	if (!name) {
 		return;
 	}
@@ -1896,11 +1982,11 @@ CommandsRegistry.registerCommand('git.addRemote', async () => {
 	if (!path) {
 		return;
 	}
-	const name = window.prompt('Remote name:');
+	const name = window.prompt(localize('sidex.ui.remoteName.821942', 'Remote name:'));
 	if (!name) {
 		return;
 	}
-	const url = window.prompt('Remote URL:');
+	const url = window.prompt(localize('sidex.ui.remoteUrl.b37b6f', 'Remote URL:'));
 	if (!url) {
 		return;
 	}
@@ -1920,7 +2006,7 @@ CommandsRegistry.registerCommand('git.removeRemote', async () => {
 	if (!path) {
 		return;
 	}
-	const name = window.prompt('Remote name to remove:');
+	const name = window.prompt(localize('sidex.ui.remoteNameToRemove.296a92', 'Remote name to remove:'));
 	if (!name) {
 		return;
 	}
@@ -1940,11 +2026,13 @@ CommandsRegistry.registerCommand('git.createTag', async () => {
 	if (!path) {
 		return;
 	}
-	const name = window.prompt('Tag name:');
+	const name = window.prompt(localize('sidex.ui.tagName.1d7a72', 'Tag name:'));
 	if (!name) {
 		return;
 	}
-	const message = window.prompt('Tag message (leave empty for lightweight tag):');
+	const message = window.prompt(
+		localize('sidex.ui.tagMessageLeaveEmptyForLightweightTag.1a2bf5', 'Tag message (leave empty for lightweight tag):')
+	);
 	try {
 		const invoke = await getTauriInvoke();
 		if (invoke) {
@@ -1962,7 +2050,7 @@ CommandsRegistry.registerCommand('git.deleteTag', async () => {
 	if (!path) {
 		return;
 	}
-	const name = window.prompt('Tag name to delete:');
+	const name = window.prompt(localize('sidex.ui.tagNameToDelete.77e3a7', 'Tag name to delete:'));
 	if (!name) {
 		return;
 	}
@@ -2003,88 +2091,94 @@ const SCMRepoViewSortMenu = new MenuId('SCMRepoViewSort');
 
 // View & Sort submenu
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	title: 'View & Sort',
+	title: localize('sidex.ui.viewSort.ffe497', 'View & Sort'),
 	submenu: SCMRepoViewSortMenu,
 	group: '0_view&sort',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMRepoViewSortMenu, {
-	command: { id: 'workbench.scm.action.setListViewMode', title: 'View as List' },
+	command: {
+		id: 'workbench.scm.action.setListViewMode',
+		title: localize('sidex.ui.viewAsList.0e8f1a', 'View as List')
+	},
 	group: '1_viewmode',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMRepoViewSortMenu, {
-	command: { id: 'workbench.scm.action.setTreeViewMode', title: 'View as Tree' },
+	command: {
+		id: 'workbench.scm.action.setTreeViewMode',
+		title: localize('sidex.ui.viewAsTree.e97a9a', 'View as Tree')
+	},
 	group: '1_viewmode',
 	order: 2
 });
 
 // Quick actions
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	command: { id: 'git.pull', title: 'Pull' },
+	command: { id: 'git.pull', title: localize('sidex.ui.pull.b66d04', 'Pull') },
 	group: '1_header',
 	order: 1
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	command: { id: 'git.push', title: 'Push' },
+	command: { id: 'git.push', title: localize('sidex.ui.push.731ce7', 'Push') },
 	group: '1_header',
 	order: 2
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	command: { id: 'git.clone', title: 'Clone...' },
+	command: { id: 'git.clone', title: localize('sidex.ui.clone.58cc99', 'Clone...') },
 	group: '1_header',
 	order: 3
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	command: { id: 'git.checkoutTo', title: 'Checkout to...' },
+	command: { id: 'git.checkoutTo', title: localize('sidex.ui.checkoutTo.eeee2f', 'Checkout to...') },
 	group: '1_header',
 	order: 4
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	command: { id: 'git.fetch', title: 'Fetch' },
+	command: { id: 'git.fetch', title: localize('sidex.ui.fetch.cd7d61', 'Fetch') },
 	group: '1_header',
 	order: 5
 });
 
 // Submenus
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	title: 'Commit',
+	title: localize('sidex.ui.commit.82a9c4', 'Commit'),
 	submenu: SCMGitCommitMenu,
 	group: '2_main',
 	order: 1
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	title: 'Changes',
+	title: localize('sidex.ui.changes.bbd4b6', 'Changes'),
 	submenu: SCMGitChangesMenu,
 	group: '2_main',
 	order: 2
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	title: 'Pull, Push',
+	title: localize('sidex.ui.pullPush.33b9c2', 'Pull, Push'),
 	submenu: SCMGitPullPushMenu,
 	group: '2_main',
 	order: 3
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	title: 'Branch',
+	title: localize('sidex.ui.branch.52656e', 'Branch'),
 	submenu: SCMGitBranchMenu,
 	group: '2_main',
 	order: 4
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	title: 'Remote',
+	title: localize('sidex.ui.remote.ffa98e', 'Remote'),
 	submenu: SCMGitRemoteMenu,
 	group: '2_main',
 	order: 5
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	title: 'Stash',
+	title: localize('sidex.ui.stash.38bdfe', 'Stash'),
 	submenu: SCMGitStashMenu,
 	group: '2_main',
 	order: 6
 });
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	title: 'Tags',
+	title: localize('sidex.ui.tags.133127', 'Tags'),
 	submenu: SCMGitTagsMenu,
 	group: '2_main',
 	order: 7
@@ -2092,176 +2186,192 @@ MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
 
 // Footer
 MenuRegistry.appendMenuItem(MenuId.SCMSourceControlInline, {
-	command: { id: 'git.showOutput', title: 'Show Git Output' },
+	command: { id: 'git.showOutput', title: localize('sidex.ui.showGitOutput.c0316c', 'Show Git Output') },
 	group: '3_footer',
 	order: 1
 });
 
 // Navigation toolbar buttons (SCM title bar)
 MenuRegistry.appendMenuItem(MenuId.SCMTitle, {
-	command: { id: 'git.commit', title: 'Commit', icon: ThemeIcon.fromId('check') },
+	command: { id: 'git.commit', title: localize('sidex.ui.commit.82a9c4', 'Commit'), icon: ThemeIcon.fromId('check') },
 	group: 'navigation',
 	order: 1
 });
 MenuRegistry.appendMenuItem(MenuId.SCMTitle, {
-	command: { id: 'git.refresh', title: 'Refresh', icon: ThemeIcon.fromId('refresh') },
+	command: {
+		id: 'git.refresh',
+		title: localize('sidex.ui.refresh.0e9161', 'Refresh'),
+		icon: ThemeIcon.fromId('refresh')
+	},
 	group: 'navigation',
 	order: 2
 });
 
 // Graph view toolbar buttons
 MenuRegistry.appendMenuItem(MenuId.SCMHistoryTitle, {
-	command: { id: 'git.fetch', title: 'Fetch', icon: ThemeIcon.fromId('git-fetch') },
+	command: { id: 'git.fetch', title: localize('sidex.ui.fetch.cd7d61', 'Fetch'), icon: ThemeIcon.fromId('git-fetch') },
 	group: 'navigation',
 	order: 3
 });
 MenuRegistry.appendMenuItem(MenuId.SCMHistoryTitle, {
-	command: { id: 'git.pull', title: 'Pull', icon: ThemeIcon.fromId('repo-pull') },
+	command: { id: 'git.pull', title: localize('sidex.ui.pull.b66d04', 'Pull'), icon: ThemeIcon.fromId('repo-pull') },
 	group: 'navigation',
 	order: 4
 });
 MenuRegistry.appendMenuItem(MenuId.SCMHistoryTitle, {
-	command: { id: 'git.push', title: 'Push', icon: ThemeIcon.fromId('repo-push') },
+	command: { id: 'git.push', title: localize('sidex.ui.push.731ce7', 'Push'), icon: ThemeIcon.fromId('repo-push') },
 	group: 'navigation',
 	order: 5
 });
 
 // ─── Commit submenu items ───────────────────────────────────────────────────
 MenuRegistry.appendMenuItem(SCMGitCommitMenu, {
-	command: { id: 'git.commit', title: 'Commit' },
+	command: { id: 'git.commit', title: localize('sidex.ui.commit.82a9c4', 'Commit') },
 	group: '1_commit',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitCommitMenu, {
-	command: { id: 'git.commitAll', title: 'Commit All' },
+	command: { id: 'git.commitAll', title: localize('sidex.ui.commitAll.2ebfff', 'Commit All') },
 	group: '1_commit',
 	order: 2
 });
 MenuRegistry.appendMenuItem(SCMGitCommitMenu, {
-	command: { id: 'git.commitAmend', title: 'Commit (Amend)' },
+	command: { id: 'git.commitAmend', title: localize('sidex.ui.commitAmend.200083', 'Commit (Amend)') },
 	group: '2_amend',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitCommitMenu, {
-	command: { id: 'git.commitAndPush', title: 'Commit & Push' },
+	command: { id: 'git.commitAndPush', title: localize('sidex.ui.commitPush.94e965', 'Commit & Push') },
 	group: '3_commitpush',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitCommitMenu, {
-	command: { id: 'git.commitAndSync', title: 'Commit & Sync' },
+	command: { id: 'git.commitAndSync', title: localize('sidex.ui.commitSync.80ff7f', 'Commit & Sync') },
 	group: '3_commitpush',
 	order: 2
 });
 
 // ─── Changes submenu items ──────────────────────────────────────────────────
 MenuRegistry.appendMenuItem(SCMGitChangesMenu, {
-	command: { id: 'git.stageAll', title: 'Stage All Changes' },
+	command: { id: 'git.stageAll', title: localize('sidex.ui.stageAllChanges.13bd40', 'Stage All Changes') },
 	group: 'changes',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitChangesMenu, {
-	command: { id: 'git.unstageAll', title: 'Unstage All Changes' },
+	command: { id: 'git.unstageAll', title: localize('sidex.ui.unstageAllChanges.b412f0', 'Unstage All Changes') },
 	group: 'changes',
 	order: 2
 });
 MenuRegistry.appendMenuItem(SCMGitChangesMenu, {
-	command: { id: 'git.discardAll', title: 'Discard All Changes' },
+	command: { id: 'git.discardAll', title: localize('sidex.ui.discardAllChanges.8a613e', 'Discard All Changes') },
 	group: 'changes',
 	order: 3
 });
 
 // ─── Pull, Push submenu items ───────────────────────────────────────────────
 MenuRegistry.appendMenuItem(SCMGitPullPushMenu, {
-	command: { id: 'git.sync', title: 'Sync' },
+	command: { id: 'git.sync', title: localize('sidex.ui.sync.8d261a', 'Sync') },
 	group: '1_sync',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitPullPushMenu, {
-	command: { id: 'git.pull', title: 'Pull' },
+	command: { id: 'git.pull', title: localize('sidex.ui.pull.b66d04', 'Pull') },
 	group: '2_pull',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitPullPushMenu, {
-	command: { id: 'git.push', title: 'Push' },
+	command: { id: 'git.push', title: localize('sidex.ui.push.731ce7', 'Push') },
 	group: '3_push',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitPullPushMenu, {
-	command: { id: 'git.fetch', title: 'Fetch' },
+	command: { id: 'git.fetch', title: localize('sidex.ui.fetch.cd7d61', 'Fetch') },
 	group: '4_fetch',
 	order: 1
 });
 
 // ─── Branch submenu items ───────────────────────────────────────────────────
 MenuRegistry.appendMenuItem(SCMGitBranchMenu, {
-	command: { id: 'git.createBranch', title: 'Create Branch...' },
+	command: { id: 'git.createBranch', title: localize('sidex.ui.createBranch.c49edd', 'Create Branch...') },
 	group: '1_branch',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitBranchMenu, {
-	command: { id: 'git.checkoutTo', title: 'Checkout to...' },
+	command: { id: 'git.checkoutTo', title: localize('sidex.ui.checkoutTo.eeee2f', 'Checkout to...') },
 	group: '1_branch',
 	order: 2
 });
 
 // ─── Stash submenu items ────────────────────────────────────────────────────
 MenuRegistry.appendMenuItem(SCMGitStashMenu, {
-	command: { id: 'git.stash', title: 'Stash' },
+	command: { id: 'git.stash', title: localize('sidex.ui.stash.38bdfe', 'Stash') },
 	group: '1_stash',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitStashMenu, {
-	command: { id: 'git.stashPopLatest', title: 'Pop Latest Stash' },
+	command: { id: 'git.stashPopLatest', title: localize('sidex.ui.popLatestStash.b35192', 'Pop Latest Stash') },
 	group: '2_pop',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitStashMenu, {
-	command: { id: 'git.stashPop', title: 'Pop Stash...' },
+	command: { id: 'git.stashPop', title: localize('sidex.ui.popStash.230e17', 'Pop Stash...') },
 	group: '2_pop',
 	order: 2
 });
 
 // ─── Remote submenu items ───────────────────────────────────────────────────
 MenuRegistry.appendMenuItem(SCMGitRemoteMenu, {
-	command: { id: 'git.addRemote', title: 'Add Remote...' },
+	command: { id: 'git.addRemote', title: localize('sidex.ui.addRemote.25e69a', 'Add Remote...') },
 	group: 'remote',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitRemoteMenu, {
-	command: { id: 'git.removeRemote', title: 'Remove Remote...' },
+	command: { id: 'git.removeRemote', title: localize('sidex.ui.removeRemote.b0ab9a', 'Remove Remote...') },
 	group: 'remote',
 	order: 2
 });
 
 // ─── Tags submenu items ─────────────────────────────────────────────────────
 MenuRegistry.appendMenuItem(SCMGitTagsMenu, {
-	command: { id: 'git.createTag', title: 'Create Tag...' },
+	command: { id: 'git.createTag', title: localize('sidex.ui.createTag.6a4e54', 'Create Tag...') },
 	group: 'tags',
 	order: 1
 });
 MenuRegistry.appendMenuItem(SCMGitTagsMenu, {
-	command: { id: 'git.deleteTag', title: 'Delete Tag...' },
+	command: { id: 'git.deleteTag', title: localize('sidex.ui.deleteTag.b5afd2', 'Delete Tag...') },
 	group: 'tags',
 	order: 2
 });
 
 // Buttons on the "Changes" group header
 MenuRegistry.appendMenuItem(MenuId.SCMResourceGroupContext, {
-	command: { id: 'git.stageAll', title: 'Stage All Changes', icon: ThemeIcon.fromId('add') },
+	command: {
+		id: 'git.stageAll',
+		title: localize('sidex.ui.stageAllChanges.13bd40', 'Stage All Changes'),
+		icon: ThemeIcon.fromId('add')
+	},
 	group: 'inline',
 	order: 3,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'changes')
 });
 
 MenuRegistry.appendMenuItem(MenuId.SCMResourceGroupContext, {
-	command: { id: 'git.discardAll', title: 'Discard All Changes', icon: ThemeIcon.fromId('discard') },
+	command: {
+		id: 'git.discardAll',
+		title: localize('sidex.ui.discardAllChanges.8a613e', 'Discard All Changes'),
+		icon: ThemeIcon.fromId('discard')
+	},
 	group: 'inline',
 	order: 2,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'changes')
 });
 
 MenuRegistry.appendMenuItem(MenuId.SCMResourceGroupContext, {
-	command: { id: 'git.openAllChanges', title: 'Open Changes', icon: ThemeIcon.fromId('diff-multiple') },
+	command: {
+		id: 'git.openAllChanges',
+		title: localize('sidex.ui.openChanges.530178', 'Open Changes'),
+		icon: ThemeIcon.fromId('diff-multiple')
+	},
 	group: 'inline',
 	order: 1,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'changes')
@@ -2269,14 +2379,22 @@ MenuRegistry.appendMenuItem(MenuId.SCMResourceGroupContext, {
 
 // Buttons on the "Staged Changes" group header
 MenuRegistry.appendMenuItem(MenuId.SCMResourceGroupContext, {
-	command: { id: 'git.unstageAll', title: 'Unstage All Changes', icon: ThemeIcon.fromId('remove') },
+	command: {
+		id: 'git.unstageAll',
+		title: localize('sidex.ui.unstageAllChanges.b412f0', 'Unstage All Changes'),
+		icon: ThemeIcon.fromId('remove')
+	},
 	group: 'inline',
 	order: 2,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'staged')
 });
 
 MenuRegistry.appendMenuItem(MenuId.SCMResourceGroupContext, {
-	command: { id: 'git.openAllChanges', title: 'Open Staged Changes', icon: ThemeIcon.fromId('diff-multiple') },
+	command: {
+		id: 'git.openAllChanges',
+		title: localize('sidex.ui.openStagedChanges.69e049', 'Open Staged Changes'),
+		icon: ThemeIcon.fromId('diff-multiple')
+	},
 	group: 'inline',
 	order: 1,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'staged')
@@ -2285,35 +2403,55 @@ MenuRegistry.appendMenuItem(MenuId.SCMResourceGroupContext, {
 // Register buttons on individual changed files (stage, discard, open)
 // Buttons on unstaged files: Open File, Discard, Stage
 MenuRegistry.appendMenuItem(MenuId.SCMResourceContext, {
-	command: { id: 'git.stageFile', title: 'Stage Changes', icon: ThemeIcon.fromId('add') },
+	command: {
+		id: 'git.stageFile',
+		title: localize('sidex.ui.stageChanges.9061f7', 'Stage Changes'),
+		icon: ThemeIcon.fromId('add')
+	},
 	group: 'inline',
 	order: 3,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'changes')
 });
 
 MenuRegistry.appendMenuItem(MenuId.SCMResourceContext, {
-	command: { id: 'git.discardFile', title: 'Discard Changes', icon: ThemeIcon.fromId('discard') },
+	command: {
+		id: 'git.discardFile',
+		title: localize('sidex.ui.discardChanges.e07e05', 'Discard Changes'),
+		icon: ThemeIcon.fromId('discard')
+	},
 	group: 'inline',
 	order: 2,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'changes')
 });
 
 MenuRegistry.appendMenuItem(MenuId.SCMResourceContext, {
-	command: { id: 'git.openFile', title: 'Open File', icon: ThemeIcon.fromId('go-to-file') },
+	command: {
+		id: 'git.openFile',
+		title: localize('sidex.ui.openFile.1e8d18', 'Open File'),
+		icon: ThemeIcon.fromId('go-to-file')
+	},
 	group: 'inline',
 	order: 1
 });
 
 // Buttons on staged files: Open File, Open Change, Unstage
 MenuRegistry.appendMenuItem(MenuId.SCMResourceContext, {
-	command: { id: 'git.unstageFile', title: 'Unstage Changes', icon: ThemeIcon.fromId('remove') },
+	command: {
+		id: 'git.unstageFile',
+		title: localize('sidex.ui.unstageChanges.eb7f3c', 'Unstage Changes'),
+		icon: ThemeIcon.fromId('remove')
+	},
 	group: 'inline',
 	order: 3,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'staged')
 });
 
 MenuRegistry.appendMenuItem(MenuId.SCMResourceContext, {
-	command: { id: 'git.openChange', title: 'Open Change', icon: ThemeIcon.fromId('git-compare') },
+	command: {
+		id: 'git.openChange',
+		title: localize('sidex.ui.openChange.14ea1d', 'Open Change'),
+		icon: ThemeIcon.fromId('git-compare')
+	},
 	group: 'inline',
 	order: 1,
 	when: ContextKeyExpr.equals('scmResourceGroup', 'staged')

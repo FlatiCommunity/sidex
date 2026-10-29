@@ -1,3 +1,4 @@
+import { localize } from '../../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Cloud Agents section for SideX Settings panel.
  *
@@ -34,7 +35,7 @@ export class CloudAgentsSection implements SettingsSection {
 
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Cloud Agents';
+		title.textContent = localize('sidex.ui.cloudAgents.b993ad', 'Cloud Agents');
 		container.appendChild(title);
 
 		const card = document.createElement('div');
@@ -53,8 +54,10 @@ export class CloudAgentsSection implements SettingsSection {
 
 		const text = document.createElement('div');
 		text.style.cssText = 'font-size:12px;color:var(--vscode-editor-foreground);line-height:1.5;';
-		text.textContent =
-			"SideX has no hosted infrastructure to run agents on — there's no remote environment, timeout, or queue to configure here. Every agent runs on this machine, using whichever providers and models you've set up under Models.";
+		text.textContent = localize(
+			'sidex.ui.sidexHasNoHostedInfrastructureToRun.f78181',
+			"SideX has no hosted infrastructure to run agents on — there's no remote environment, timeout, or queue to configure here. Every agent runs on this machine, using whichever providers and models you've set up under Models."
+		);
 		infoCol.appendChild(text);
 
 		row.appendChild(infoCol);
@@ -62,7 +65,7 @@ export class CloudAgentsSection implements SettingsSection {
 		const configureBtn = document.createElement('button');
 		configureBtn.className = 'sidex-settings-btn';
 		configureBtn.style.flexShrink = '0';
-		configureBtn.textContent = 'Configure Models';
+		configureBtn.textContent = localize('sidex.ui.configureModels.d269f7', 'Configure Models');
 		configureBtn.addEventListener('click', () => {
 			window.dispatchEvent(new CustomEvent('sidex-settings-navigate', { detail: 'models' }));
 		});

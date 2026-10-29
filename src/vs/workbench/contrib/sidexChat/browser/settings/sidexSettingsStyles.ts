@@ -1,3 +1,4 @@
+import { localize } from '../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Styles for the SideX Settings panel content.
  *  The modal frame uses real VS Code classes with inline styles for the
@@ -960,7 +961,7 @@ export function createCustomDropdown(
 		if (opt.isSoon) {
 			const soonSpan = document.createElement('span');
 			soonSpan.className = 'sidex-custom-dropdown-item-soon';
-			soonSpan.textContent = 'soon';
+			soonSpan.textContent = localize('sidex.ui.soon.4a7541', 'soon');
 			item.appendChild(soonSpan);
 		}
 

@@ -1,3 +1,4 @@
+import { localize } from '../../../../../../nls.js';
 import { Component, DOM, $ } from '../base.js';
 import { IChatMessage } from '../../sidexChatService.js';
 import { renderMarkdown } from '../markdownRenderer.js';
@@ -82,7 +83,7 @@ export class UserMessage extends Component {
 
 		const text = document.createElement('span');
 		text.className = 'sc-revert-confirm-text';
-		text.textContent = 'Discard changes after this point?';
+		text.textContent = localize('sidex.ui.discardChangesAfterThisPoint.d9b06a', 'Discard changes after this point?');
 		text.style.cssText = 'font-size: 12px; color: var(--vscode-descriptionForeground);';
 		card.appendChild(text);
 
@@ -92,7 +93,7 @@ export class UserMessage extends Component {
 
 		const cancelBtn = document.createElement('button');
 		cancelBtn.className = 'sc-revert-confirm-btn sc-revert-cancel';
-		cancelBtn.textContent = 'Cancel';
+		cancelBtn.textContent = localize('sidex.ui.cancel.19766e', 'Cancel');
 		cancelBtn.style.cssText =
 			'padding: 3px 10px; border-radius: 4px; font-size: 11px; background: transparent; border: 1px solid rgba(255,255,255,0.1); color: var(--vscode-descriptionForeground); cursor: pointer;';
 		cancelBtn.addEventListener('click', e => {
@@ -103,7 +104,7 @@ export class UserMessage extends Component {
 
 		const continueBtn = document.createElement('button');
 		continueBtn.className = 'sc-revert-confirm-btn sc-revert-continue';
-		continueBtn.textContent = 'Continue';
+		continueBtn.textContent = localize('sidex.ui.continue.31fbef', 'Continue');
 		continueBtn.style.cssText =
 			'padding: 3px 10px; border-radius: 4px; font-size: 11px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: var(--vscode-foreground); cursor: pointer;';
 		continueBtn.addEventListener('click', e => {
@@ -188,7 +189,7 @@ function renderAttachmentPreviewStrip(parent: HTMLElement, previews: AttachmentP
 		if (preview.kind === 'image') {
 			const imageContainer = DOM.append(pill, $('div.image-pill-container'));
 			const img = DOM.append(imageContainer, $('img.image-pill-img')) as HTMLImageElement;
-			img.alt = 'Attached image';
+			img.alt = localize('sidex.attachment.image', 'Attached image');
 			img.loading = 'lazy';
 			void loadImagePreview(img, preview.path);
 		} else {

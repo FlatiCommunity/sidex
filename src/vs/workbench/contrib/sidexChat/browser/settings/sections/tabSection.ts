@@ -1,3 +1,4 @@
+import { localize } from '../../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Tab section for SideX Settings panel.
  *  Controls for Cursor Tab completions, partial accepts, imports, and ignored files.
@@ -50,31 +51,37 @@ export class TabSection implements SettingsSection {
 		this._createToggleRow(
 			card,
 			'Sidex Tab',
-			'Context-aware multi-line code suggestions as you type',
+			localize(
+				'sidex.ui.contextAwareMultiLineCodeSuggestionsAs.275827',
+				'Context-aware multi-line code suggestions as you type'
+			),
 			'sidex.tab.cursorTab',
 			this._getSetting('cursorTab', true) as boolean
 		);
 
 		this._createToggleRow(
 			card,
-			'Partial Accepts',
-			'Accept the next word of a suggestion via Cmd+\u2192',
+			localize('sidex.ui.partialAccepts.6f0909', 'Partial Accepts'),
+			localize('sidex.ui.acceptTheNextWordOfASuggestion.45fba6', 'Accept the next word of a suggestion via Cmd+→'),
 			'sidex.tab.partialAccepts',
 			this._getSetting('partialAccepts', false) as boolean
 		);
 
 		this._createToggleRow(
 			card,
-			'Suggestions While Commenting',
-			'Allow Tab completions in comment regions',
+			localize('sidex.ui.suggestionsWhileCommenting.c8a361', 'Suggestions While Commenting'),
+			localize('sidex.ui.allowTabCompletionsInCommentRegions.87ca04', 'Allow Tab completions in comment regions'),
 			'sidex.tab.suggestionsWhileCommenting',
 			this._getSetting('suggestionsWhileCommenting', true) as boolean
 		);
 
 		this._createToggleRow(
 			card,
-			'Whitespace-Only Suggestions',
-			'Allow suggestions that only change whitespace',
+			localize('sidex.ui.whitespaceOnlySuggestions.9469dd', 'Whitespace-Only Suggestions'),
+			localize(
+				'sidex.ui.allowSuggestionsThatOnlyChangeWhitespace.fefedf',
+				'Allow suggestions that only change whitespace'
+			),
 			'sidex.tab.whitespaceOnlySuggestions',
 			this._getSetting('whitespaceOnlySuggestions', false) as boolean
 		);
@@ -83,7 +90,7 @@ export class TabSection implements SettingsSection {
 	private _renderImportSettings(container: HTMLElement): void {
 		const sectionTitle = document.createElement('div');
 		sectionTitle.className = 'sidex-settings-section-title';
-		sectionTitle.textContent = 'Imports';
+		sectionTitle.textContent = localize('sidex.ui.imports.7df60b', 'Imports');
 		sectionTitle.style.marginTop = '24px';
 		container.appendChild(sectionTitle);
 
@@ -91,16 +98,22 @@ export class TabSection implements SettingsSection {
 
 		this._createToggleRow(
 			card,
-			'Imports',
-			'Automatically import necessary modules for TypeScript',
+			localize('sidex.ui.imports.7df60b', 'Imports'),
+			localize(
+				'sidex.ui.automaticallyImportNecessaryModulesForTypescript.6b97d8',
+				'Automatically import necessary modules for TypeScript'
+			),
 			'sidex.tab.imports',
 			this._getSetting('imports', true) as boolean
 		);
 
 		this._createToggleRowWithBadge(
 			card,
-			'Auto Import for Python',
-			'Automatically add import statements for Python files',
+			localize('sidex.ui.autoImportForPython.199c9b', 'Auto Import for Python'),
+			localize(
+				'sidex.ui.automaticallyAddImportStatementsForPythonFiles.46b831',
+				'Automatically add import statements for Python files'
+			),
 			'sidex.tab.autoImportPython',
 			this._getSetting('autoImportPython', false) as boolean,
 			'BETA'
@@ -110,7 +123,7 @@ export class TabSection implements SettingsSection {
 	private _renderIgnoredFiles(container: HTMLElement): void {
 		const sectionTitle = document.createElement('div');
 		sectionTitle.className = 'sidex-settings-section-title';
-		sectionTitle.textContent = 'Ignored Files';
+		sectionTitle.textContent = localize('sidex.ui.ignoredFiles.22c81c', 'Ignored Files');
 		sectionTitle.style.marginTop = '24px';
 		container.appendChild(sectionTitle);
 
@@ -125,12 +138,15 @@ export class TabSection implements SettingsSection {
 		const left = document.createElement('div');
 		const lbl = document.createElement('div');
 		lbl.className = 'sidex-settings-row-label';
-		lbl.textContent = 'Ignored Files';
+		lbl.textContent = localize('sidex.ui.ignoredFiles.22c81c', 'Ignored Files');
 		left.appendChild(lbl);
 
 		const desc = document.createElement('div');
 		desc.className = 'sidex-settings-row-description';
-		desc.textContent = 'Glob patterns for files where Tab completions should be disabled';
+		desc.textContent = localize(
+			'sidex.ui.globPatternsForFilesWhereTabCompletions.0f6ed3',
+			'Glob patterns for files where Tab completions should be disabled'
+		);
 		left.appendChild(desc);
 		row.appendChild(left);
 
@@ -139,7 +155,7 @@ export class TabSection implements SettingsSection {
 		const input = document.createElement('input');
 		input.type = 'text';
 		input.value = this._getSetting('ignoredFiles', '') as string;
-		input.placeholder = 'e.g., *.md, **/generated/';
+		input.placeholder = localize('sidex.ui.eGMdGenerated.dba825', 'e.g., *.md, **/generated/');
 		input.addEventListener('change', () => this._saveSetting('sidex.tab.ignoredFiles', input.value));
 		wrapper.appendChild(input);
 		row.appendChild(wrapper);

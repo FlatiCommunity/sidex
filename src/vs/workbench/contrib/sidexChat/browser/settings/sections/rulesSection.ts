@@ -363,7 +363,10 @@ export class RulesSection implements SettingsSection {
 		const parentDir = scope === 'project' ? `${this._workspacePath}/.sidex/rules` : `~/.sidex/rules`;
 		const path = `${parentDir}/${filename}`;
 
-		const template = `---\ndescription: New rule\nglobs: \n---\n\n# Rule Name\n\nDescribe your rule here.\n`;
+		const template = localize(
+			'sidex.rule.template',
+			'---\ndescription: New rule\nglobs: \n---\n\n# Rule Name\n\nDescribe your rule here.\n'
+		);
 
 		this._invoke('mkdir', { path: parentDir, recursive: true })
 			.then(() => {
@@ -387,7 +390,10 @@ export class RulesSection implements SettingsSection {
 		const parentDir = `${this._workspacePath}/.sidex/skills`;
 		const path = `${parentDir}/${filename}`;
 
-		const template = `# Skill Name\n\nDescribe what this skill does and when to use it.\n`;
+		const template = localize(
+			'sidex.skill.template',
+			'# Skill Name\n\nDescribe what this skill does and when to use it.\n'
+		);
 
 		this._invoke('mkdir', { path: parentDir, recursive: true })
 			.then(() => {

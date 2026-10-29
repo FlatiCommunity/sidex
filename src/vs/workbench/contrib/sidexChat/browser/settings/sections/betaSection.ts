@@ -1,3 +1,5 @@
+import { localizedSettingOptions } from '../settingLabels.js';
+import { localize } from '../../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Beta section for SideX Settings panel.
  *  Update channel selection and experimental feature toggles.
@@ -21,7 +23,7 @@ export class BetaSection implements SettingsSection {
 
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Beta';
+		title.textContent = localize('sidex.ui.beta.703390', 'Beta');
 		container.appendChild(title);
 
 		this._renderUpdateAccess(container);
@@ -38,18 +40,20 @@ export class BetaSection implements SettingsSection {
 		const left = document.createElement('div');
 		const label = document.createElement('div');
 		label.className = 'sidex-settings-row-label';
-		label.textContent = 'Update Access';
+		label.textContent = localize('sidex.ui.updateAccess.90bf68', 'Update Access');
 		left.appendChild(label);
 		const desc = document.createElement('div');
 		desc.className = 'sidex-settings-row-description';
-		desc.textContent =
-			'By default, get notifications for stable updates. In Early Access, pre-release builds may be unstable for production work.';
+		desc.textContent = localize(
+			'sidex.ui.byDefaultGetNotificationsForStableUpdates.fa9d0f',
+			'By default, get notifications for stable updates. In Early Access, pre-release builds may be unstable for production work.'
+		);
 		left.appendChild(desc);
 		row.appendChild(left);
 
 		const action = document.createElement('div');
 		action.className = 'sidex-settings-row-action';
-		const dropdown = createCustomDropdown(['Default', 'Early Access'], 'Default', newValue => {
+		const dropdown = createCustomDropdown(localizedSettingOptions(['Default', 'Early Access']), 'Default', newValue => {
 			if (this._invoke) {
 				this._invoke('settings_update', {
 					key: 'sidex.beta.updateChannel',
@@ -86,12 +90,14 @@ export class BetaSection implements SettingsSection {
 		const left = document.createElement('div');
 		const label = document.createElement('div');
 		label.className = 'sidex-settings-row-label';
-		label.textContent = 'Extension RPC Tracer';
+		label.textContent = localize('sidex.ui.extensionRpcTracer.7af8f9', 'Extension RPC Tracer');
 		left.appendChild(label);
 		const desc = document.createElement('div');
 		desc.className = 'sidex-settings-row-description';
-		desc.textContent =
-			'Log extension host RPC messages to JSON files viewable in Perfetto for performance analysis. Requires a restart to take effect.';
+		desc.textContent = localize(
+			'sidex.ui.logExtensionHostRpcMessagesToJson.6d4efe',
+			'Log extension host RPC messages to JSON files viewable in Perfetto for performance analysis. Requires a restart to take effect.'
+		);
 		left.appendChild(desc);
 		row.appendChild(left);
 

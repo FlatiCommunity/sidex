@@ -8,6 +8,7 @@
  *  3. Maintains local task graph state for the UI
  *--------------------------------------------------------------------------------------------*/
 
+import { localize } from '../../../../../nls.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import {
@@ -70,7 +71,11 @@ export class SidexOrchestrator extends Disposable {
 	async orchestrate(goal: string, serverUrl: string, workspace: string): Promise<void> {
 		const invoke = getInvoke();
 		if (!invoke) {
-			this._emit({ type: 'error', error: 'Tauri IPC not available', recoverable: false });
+			this._emit({
+				type: 'error',
+				error: localize('sidex.orch.unavailable', 'Native orchestration service is unavailable'),
+				recoverable: false
+			});
 			return;
 		}
 
@@ -108,14 +113,14 @@ export class SidexOrchestrator extends Disposable {
 		} catch (err) {
 			this._emit({
 				type: 'error',
-				error: `Orchestration failed: ${err}`,
+				error: localize('sidex.orch.failed', 'Orchestration failed: {0}', String(err)),
 				recoverable: false
 			});
 			this._setState('cancelled');
 		}
 	}
 
-	async cancel(reason = 'User cancelled'): Promise<void> {
+	async cancel(reason = localize('sidex.orch.cancelledByUser', 'User cancelled')): Promise<void> {
 		this._cancelled = true;
 		const invoke = getInvoke();
 		if (invoke && this._plan) {
@@ -299,7 +304,7 @@ export class SidexOrchestrator extends Disposable {
 				this._emit({
 					type: 'error',
 					taskId: payload.task_id,
-					error: (payload.data.error as string) || 'Unknown error',
+					error: (payload.data.error as string) || localize('sidex.orch.unknownError', 'Unknown error'),
 					recoverable: true
 				});
 				break;
@@ -307,7 +312,7 @@ export class SidexOrchestrator extends Disposable {
 				this._cancelled = true;
 				this._emit({
 					type: 'cancelled',
-					reason: (payload.data.reason as string) || 'Cancelled'
+					reason: (payload.data.reason as string) || localize('sidex.orch.cancelled', 'Cancelled')
 				});
 				break;
 		}

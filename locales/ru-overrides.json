@@ -171,7 +171,8 @@
       "noHost.tooltip": "Открыть удалённое окно",
       "remote.wsl.folderPrompt": "Папка Linux для открытия в {0}",
       "remote.wsl.absolutePath": "Укажите абсолютный путь Linux, например /home/user/project.",
-      "remote.wsl.folderRequired": "Выбранный путь Linux не является папкой."
+      "remote.wsl.folderRequired": "Выбранный путь Linux не является папкой.",
+      "remote.ssh.connect": "Подключиться к SSH-серверу…"
     },
     "vs/workbench/contrib/remote/browser/remoteExplorer": {
       "remote.connect": "Подключиться",
@@ -1136,6 +1137,27 @@
     "vs/platform/files/browser/tauriSshFileSystemProvider": {
       "ssh.noTrash": "Файловая система SSH не поддерживает корзину.",
       "ssh.crossHostRename": "Для перемещения файлов между SSH-серверами сначала скопируйте их."
+    },
+    "vs/workbench/contrib/remote/browser/sshWorkspace": {
+      "ssh.proxyJumpUnsupported": "Для этого SSH-подключения используется ProxyJump. Подключитесь к целевому серверу через SSH-туннель или используйте напрямую доступный сервер.",
+      "ssh.destination": "Адрес SSH (пользователь@сервер:порт или пользователь@[IPv6]:порт)",
+      "ssh.invalidDestination": "Введите имя сервера и порт от 1 до 65535.",
+      "ssh.username": "Имя пользователя SSH",
+      "ssh.usernameRequired": "Введите имя пользователя SSH.",
+      "ssh.hostKeyChanged": "Ключ сервера {0}:{1} изменился ({2}). Проверьте новый ключ у администратора сервера перед обновлением known_hosts.",
+      "ssh.cancel": "Отмена",
+      "ssh.trustHost": "Доверять этому ключу сервера и подключиться",
+      "ssh.verifyHost": "Проверьте отпечаток SSH для {0}:{1}: {2}",
+      "ssh.authAgent": "Агент SSH",
+      "ssh.authKey": "Файл закрытого ключа",
+      "ssh.authPassword": "Пароль",
+      "ssh.authMethod": "Выберите способ аутентификации SSH",
+      "ssh.passwordPrompt": "Пароль для {0}@{1}",
+      "ssh.keyPath": "Путь к локальному закрытому ключу SSH",
+      "ssh.keyPassphrase": "Парольная фраза закрытого ключа (оставьте пустой для незашифрованного ключа)",
+      "ssh.folderPrompt": "Удалённая папка для открытия на {0}",
+      "ssh.absoluteFolder": "Введите абсолютный путь к удалённой папке.",
+      "ssh.folderRequired": "Выбранный удалённый путь не является папкой."
     }
   }
 }

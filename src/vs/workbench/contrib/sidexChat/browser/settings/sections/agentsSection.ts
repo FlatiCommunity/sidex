@@ -1,3 +1,5 @@
+import { localizedSettingOptions } from '../settingLabels.js';
+import { localize } from '../../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Agents section for SideX Settings panel.
  *  Text size, submit behavior, subagents, agent review, attribution, and git.
@@ -40,7 +42,7 @@ export class AgentsSection implements SettingsSection {
 
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Agents';
+		title.textContent = localize('sidex.ui.agents.279b44', 'Agents');
 		container.appendChild(title);
 
 		this._renderMainSettings(container);
@@ -55,8 +57,8 @@ export class AgentsSection implements SettingsSection {
 
 		this._createDropdownRow(
 			card,
-			'Text Size',
-			'Controls conversation text size',
+			localize('sidex.ui.textSize.4c676f', 'Text Size'),
+			localize('sidex.ui.controlsConversationTextSize.681a0e', 'Controls conversation text size'),
 			'sidex.agents.textSize',
 			['Default', 'Small', 'Large'],
 			this._getSetting('textSize', 'Default') as string
@@ -64,16 +66,19 @@ export class AgentsSection implements SettingsSection {
 
 		this._createToggleRow(
 			card,
-			'Submit with Cmd+Enter',
-			'When enabled, Cmd+Enter submits and Enter inserts newline',
+			localize('sidex.ui.submitWithCmdEnter.546282', 'Submit with Cmd+Enter'),
+			localize(
+				'sidex.ui.whenEnabledCmdEnterSubmitsAndEnter.7768e1',
+				'When enabled, Cmd+Enter submits and Enter inserts newline'
+			),
 			'sidex.agents.submitWithCmdEnter',
 			this._getSetting('submitWithCmdEnter', false) as boolean
 		);
 
 		this._createNumberWithDropdownRow(
 			card,
-			'Max Tab Count',
-			'Maximum number of concurrent tabs',
+			localize('sidex.ui.maxTabCount.09f20a', 'Max Tab Count'),
+			localize('sidex.ui.maximumNumberOfConcurrentTabs.80207c', 'Maximum number of concurrent tabs'),
 			'sidex.agents.maxTabCount',
 			this._getSetting('maxTabCount', 5) as number,
 			['Custom', 'Unlimited'],
@@ -82,8 +87,11 @@ export class AgentsSection implements SettingsSection {
 
 		this._createDropdownRow(
 			card,
-			'Queue Messages',
-			'Behavior when sending messages while one is active',
+			localize('sidex.ui.queueMessages.2ebf33', 'Queue Messages'),
+			localize(
+				'sidex.ui.behaviorWhenSendingMessagesWhileOneIs.66aa82',
+				'Behavior when sending messages while one is active'
+			),
 			'sidex.agents.queueMessages',
 			['Send after current message', 'Queue all', 'Ask each time'],
 			this._getSetting('queueMessages', 'Send after current message') as string
@@ -91,8 +99,8 @@ export class AgentsSection implements SettingsSection {
 
 		this._createDropdownRow(
 			card,
-			'Usage Summary',
-			'When to show usage summary after responses',
+			localize('sidex.ui.usageSummary.d076df', 'Usage Summary'),
+			localize('sidex.ui.whenToShowUsageSummaryAfterResponses.cba194', 'When to show usage summary after responses'),
 			'sidex.agents.usageSummary',
 			['Auto', 'Always', 'Never'],
 			this._getSetting('usageSummary', 'Auto') as string
@@ -100,16 +108,16 @@ export class AgentsSection implements SettingsSection {
 
 		this._createToggleRow(
 			card,
-			'Agent Autocomplete',
-			'Contextual suggestions while prompting',
+			localize('sidex.ui.agentAutocomplete.2078e0', 'Agent Autocomplete'),
+			localize('sidex.ui.contextualSuggestionsWhilePrompting.e90151', 'Contextual suggestions while prompting'),
 			'sidex.agents.agentAutocomplete',
 			this._getSetting('agentAutocomplete', true) as boolean
 		);
 
 		this._createToggleRow(
 			card,
-			'Auto-Approve Mode Transitions',
-			'Allow agent to switch modes without asking',
+			localize('sidex.ui.autoApproveModeTransitions.262c4d', 'Auto-Approve Mode Transitions'),
+			localize('sidex.ui.allowAgentToSwitchModesWithoutAsking.3bbc2b', 'Allow agent to switch modes without asking'),
 			'sidex.agents.autoApproveModeTransitions',
 			this._getSetting('autoApproveModeTransitions', false) as boolean
 		);
@@ -118,7 +126,7 @@ export class AgentsSection implements SettingsSection {
 	private _renderSubagents(container: HTMLElement): void {
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Subagents';
+		title.textContent = localize('sidex.ui.subagents.88296a', 'Subagents');
 		title.style.marginTop = '24px';
 		container.appendChild(title);
 
@@ -130,7 +138,7 @@ export class AgentsSection implements SettingsSection {
 		const left = document.createElement('div');
 		const label = document.createElement('div');
 		label.className = 'sidex-settings-row-label';
-		label.textContent = 'Explore subagent model';
+		label.textContent = localize('sidex.ui.exploreSubagentModel.bdc09e', 'Explore subagent model');
 		left.appendChild(label);
 		row.appendChild(left);
 
@@ -146,7 +154,7 @@ export class AgentsSection implements SettingsSection {
 			const link = document.createElement('span');
 			link.className = 'sidex-settings-link';
 			link.style.cssText = 'font-size:12px;cursor:pointer;';
-			link.textContent = 'Add a model to choose one';
+			link.textContent = localize('sidex.ui.addAModelToChooseOne.1e64a7', 'Add a model to choose one');
 			link.addEventListener('click', () => {
 				window.dispatchEvent(new CustomEvent('sidex-settings-navigate', { detail: 'models' }));
 			});
@@ -162,7 +170,7 @@ export class AgentsSection implements SettingsSection {
 			gearIcon.className = 'codicon codicon-settings-gear';
 			gearIcon.style.cursor = 'pointer';
 			gearIcon.style.opacity = '0.7';
-			gearIcon.title = 'Configure model';
+			gearIcon.title = localize('sidex.ui.configureModel.8d45da', 'Configure model');
 			gearIcon.addEventListener('click', () => {
 				window.dispatchEvent(new CustomEvent('sidex-settings-navigate', { detail: 'models' }));
 			});
@@ -176,7 +184,7 @@ export class AgentsSection implements SettingsSection {
 	private _renderAgentReview(container: HTMLElement): void {
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Agent Review';
+		title.textContent = localize('sidex.ui.agentReview.401c5a', 'Agent Review');
 		title.style.marginTop = '24px';
 		container.appendChild(title);
 
@@ -184,32 +192,32 @@ export class AgentsSection implements SettingsSection {
 
 		this._createToggleRow(
 			card,
-			'Start Agent Review on Commit',
-			'Automatically start review when committing',
+			localize('sidex.ui.startAgentReviewOnCommit.4db30e', 'Start Agent Review on Commit'),
+			localize('sidex.ui.automaticallyStartReviewWhenCommitting.d23a93', 'Automatically start review when committing'),
 			'sidex.agents.startReviewOnCommit',
 			this._getSetting('startReviewOnCommit', false) as boolean
 		);
 
 		this._createToggleRow(
 			card,
-			'Include Submodules in Agent Review',
-			'Include git submodule changes in review',
+			localize('sidex.ui.includeSubmodulesInAgentReview.1d1f3c', 'Include Submodules in Agent Review'),
+			localize('sidex.ui.includeGitSubmoduleChangesInReview.ca68ee', 'Include git submodule changes in review'),
 			'sidex.agents.includeSubmodules',
 			this._getSetting('includeSubmodules', true) as boolean
 		);
 
 		this._createToggleRow(
 			card,
-			'Include Untracked Files in Agent Review',
-			'Include new untracked files in review',
+			localize('sidex.ui.includeUntrackedFilesInAgentReview.542587', 'Include Untracked Files in Agent Review'),
+			localize('sidex.ui.includeNewUntrackedFilesInReview.af711e', 'Include new untracked files in review'),
 			'sidex.agents.includeUntracked',
 			this._getSetting('includeUntracked', true) as boolean
 		);
 
 		this._createDropdownRow(
 			card,
-			'Default Approach',
-			'How thorough agent review should be',
+			localize('sidex.ui.defaultApproach.d073e5', 'Default Approach'),
+			localize('sidex.ui.howThoroughAgentReviewShouldBe.35c36e', 'How thorough agent review should be'),
 			'sidex.agents.defaultApproach',
 			['Quick', 'Thorough'],
 			this._getSetting('defaultApproach', 'Quick') as string
@@ -219,7 +227,7 @@ export class AgentsSection implements SettingsSection {
 	private _renderAttribution(container: HTMLElement): void {
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Attribution';
+		title.textContent = localize('sidex.ui.attribution.a902dc', 'Attribution');
 		title.style.marginTop = '24px';
 		container.appendChild(title);
 
@@ -227,16 +235,16 @@ export class AgentsSection implements SettingsSection {
 
 		this._createToggleRow(
 			card,
-			'Commit Attribution',
-			"Mark commits as 'Made with SideX'",
+			localize('sidex.ui.commitAttribution.c3dfe2', 'Commit Attribution'),
+			localize('sidex.ui.markCommitsAsMadeWithSidex.7efea0', "Mark commits as 'Made with SideX'"),
 			'sidex.agents.commitAttribution',
 			this._getSetting('commitAttribution', true) as boolean
 		);
 
 		this._createToggleRow(
 			card,
-			'PR Attribution',
-			'Mark pull requests as made with SideX',
+			localize('sidex.ui.prAttribution.0570d3', 'PR Attribution'),
+			localize('sidex.ui.markPullRequestsAsMadeWithSidex.f0da4a', 'Mark pull requests as made with SideX'),
 			'sidex.agents.prAttribution',
 			this._getSetting('prAttribution', true) as boolean
 		);
@@ -253,8 +261,11 @@ export class AgentsSection implements SettingsSection {
 
 		this._createInputRow(
 			card,
-			'Branch Prefix',
-			'Prefix applied to branches created by the agent',
+			localize('sidex.ui.branchPrefix.aa6c72', 'Branch Prefix'),
+			localize(
+				'sidex.ui.prefixAppliedToBranchesCreatedByThe.3761b6',
+				'Prefix applied to branches created by the agent'
+			),
 			'sidex.agents.branchPrefix',
 			this._getSetting('branchPrefix', '') as string,
 			'cursor/'
@@ -381,7 +392,7 @@ export class AgentsSection implements SettingsSection {
 
 		const action = document.createElement('div');
 		action.className = 'sidex-settings-row-action';
-		const dropdown = createCustomDropdown(options, currentValue, newValue => {
+		const dropdown = createCustomDropdown(localizedSettingOptions(options), currentValue, newValue => {
 			this._saveSetting(settingKey, newValue);
 		});
 		action.appendChild(dropdown);
@@ -478,7 +489,7 @@ export class AgentsSection implements SettingsSection {
 		);
 		numWrapper.appendChild(numInput);
 
-		const select = createCustomDropdown(modeOptions, currentMode, newValue => {
+		const select = createCustomDropdown(localizedSettingOptions(modeOptions), currentMode, newValue => {
 			const isUnlimited = newValue === 'Unlimited';
 			numInput.disabled = isUnlimited;
 			numWrapper.style.opacity = isUnlimited ? '0.5' : '1';

@@ -1,3 +1,4 @@
+import { localize } from '../../../../../../nls.js';
 /*---------------------------------------------------------------------------------------------
  *  Network section for SideX Settings panel.
  *  HTTP mode, required domains, and network diagnostics.
@@ -70,7 +71,7 @@ export class NetworkSection implements SettingsSection {
 
 		const title = document.createElement('div');
 		title.className = 'sidex-settings-section-title';
-		title.textContent = 'Network';
+		title.textContent = localize('sidex.ui.network.1744b9', 'Network');
 		container.appendChild(title);
 
 		this._renderHttpMode(container);
@@ -88,12 +89,14 @@ export class NetworkSection implements SettingsSection {
 		const left = document.createElement('div');
 		const label = document.createElement('div');
 		label.className = 'sidex-settings-row-label';
-		label.textContent = 'HTTP Compatibility Mode';
+		label.textContent = localize('sidex.ui.httpCompatibilityMode.117153', 'HTTP Compatibility Mode');
 		left.appendChild(label);
 		const desc = document.createElement('div');
 		desc.className = 'sidex-settings-row-description';
-		desc.textContent =
-			'HTTP/2 provides low-latency streaming. Switch to HTTP/1.1 if your proxy or firewall does not support HTTP/2.';
+		desc.textContent = localize(
+			'sidex.ui.httpProvidesLowLatencyStreamingSwitchTo.ecd9db',
+			'HTTP/2 provides low-latency streaming. Switch to HTTP/1.1 if your proxy or firewall does not support HTTP/2.'
+		);
 		left.appendChild(desc);
 		row.appendChild(left);
 
@@ -139,17 +142,21 @@ export class NetworkSection implements SettingsSection {
 		const label = document.createElement('div');
 		label.className = 'sidex-settings-row-label';
 		label.style.fontWeight = '600';
-		label.textContent = 'Required Domains';
+		label.textContent = localize('sidex.ui.requiredDomains.940e69', 'Required Domains');
 		left.appendChild(label);
 		const desc = document.createElement('div');
 		desc.className = 'sidex-settings-row-description';
-		desc.textContent =
-			'These domains must be accessible for SideX to function: your configured AI provider(s), the extension marketplace, and update checks. Add them to your firewall or proxy allowlist.';
+		desc.textContent = localize(
+			'sidex.ui.theseDomainsMustBeAccessibleForSidex.de6d75',
+			'These domains must be accessible for SideX to function: your configured AI provider(s), the extension marketplace, and update checks. Add them to your firewall or proxy allowlist.'
+		);
 		left.appendChild(desc);
 		const note = document.createElement('div');
 		note.className = 'sidex-settings-row-description';
-		note.textContent =
-			'The agent server itself runs on loopback (127.0.0.1) and never leaves this machine, so it does not need a firewall entry.';
+		note.textContent = localize(
+			'sidex.ui.theAgentServerItselfRunsOnLoopback.eb123d',
+			'The agent server itself runs on loopback (127.0.0.1) and never leaves this machine, so it does not need a firewall entry.'
+		);
 		left.appendChild(note);
 		row.appendChild(left);
 
@@ -159,24 +166,24 @@ export class NetworkSection implements SettingsSection {
 
 		const copyBtn = document.createElement('button');
 		copyBtn.className = 'sidex-settings-btn';
-		copyBtn.textContent = 'Copy Domains';
+		copyBtn.textContent = localize('sidex.ui.copyDomains.eb3b18', 'Copy Domains');
 		copyBtn.addEventListener('click', () => {
 			const domainList = domains.join('\n');
 			if (this._invoke) {
 				this._invoke('clipboard_write_text', { text: domainList })
 					.then(() => {
-						copyBtn.textContent = 'Copied!';
+						copyBtn.textContent = localize('sidex.ui.copied.ea61bc', 'Copied!');
 						setTimeout(() => {
-							copyBtn.textContent = 'Copy Domains';
+							copyBtn.textContent = localize('sidex.ui.copyDomains.eb3b18', 'Copy Domains');
 						}, 2000);
 					})
 					.catch(() => {
 						navigator.clipboard
 							.writeText(domainList)
 							.then(() => {
-								copyBtn.textContent = 'Copied!';
+								copyBtn.textContent = localize('sidex.ui.copied.ea61bc', 'Copied!');
 								setTimeout(() => {
-									copyBtn.textContent = 'Copy Domains';
+									copyBtn.textContent = localize('sidex.ui.copyDomains.eb3b18', 'Copy Domains');
 								}, 2000);
 							})
 							.catch(() => {});
@@ -185,9 +192,9 @@ export class NetworkSection implements SettingsSection {
 				navigator.clipboard
 					.writeText(domainList)
 					.then(() => {
-						copyBtn.textContent = 'Copied!';
+						copyBtn.textContent = localize('sidex.ui.copied.ea61bc', 'Copied!');
 						setTimeout(() => {
-							copyBtn.textContent = 'Copy Domains';
+							copyBtn.textContent = localize('sidex.ui.copyDomains.eb3b18', 'Copy Domains');
 						}, 2000);
 					})
 					.catch(() => {});
@@ -197,10 +204,12 @@ export class NetworkSection implements SettingsSection {
 
 		const showBtn = document.createElement('button');
 		showBtn.className = 'sidex-settings-btn';
-		showBtn.textContent = 'Show';
+		showBtn.textContent = localize('sidex.ui.show.0df6f1', 'Show');
 		showBtn.addEventListener('click', () => {
 			this._domainsVisible = !this._domainsVisible;
-			showBtn.textContent = this._domainsVisible ? 'Hide' : 'Show';
+			showBtn.textContent = this._domainsVisible
+				? localize('sidex.ui.hide.ac20a5', 'Hide')
+				: localize('sidex.ui.show.0df6f1', 'Show');
 			domainsList.style.display = this._domainsVisible ? 'block' : 'none';
 		});
 		action.appendChild(showBtn);
@@ -232,11 +241,14 @@ export class NetworkSection implements SettingsSection {
 		const left = document.createElement('div');
 		const label = document.createElement('div');
 		label.className = 'sidex-settings-row-label';
-		label.textContent = 'Network Diagnostics';
+		label.textContent = localize('sidex.ui.networkDiagnostics.6630b6', 'Network Diagnostics');
 		left.appendChild(label);
 		const desc = document.createElement('div');
 		desc.className = 'sidex-settings-row-description';
-		desc.textContent = 'Check connectivity to the local agent server and to the domains above.';
+		desc.textContent = localize(
+			'sidex.ui.checkConnectivityToTheLocalAgentServer.3abeba',
+			'Check connectivity to the local agent server and to the domains above.'
+		);
 		left.appendChild(desc);
 		row.appendChild(left);
 
@@ -244,7 +256,7 @@ export class NetworkSection implements SettingsSection {
 		action.className = 'sidex-settings-row-action';
 		const runBtn = document.createElement('button');
 		runBtn.className = 'sidex-settings-btn sidex-settings-btn-primary';
-		runBtn.textContent = 'Run Diagnostic';
+		runBtn.textContent = localize('sidex.ui.runDiagnostic.9abc4e', 'Run Diagnostic');
 		runBtn.addEventListener('click', () => {
 			this._runDiagnostic(runBtn, card);
 		});
@@ -257,7 +269,7 @@ export class NetworkSection implements SettingsSection {
 
 	private async _runDiagnostic(btn: HTMLButtonElement, card: HTMLElement): Promise<void> {
 		btn.disabled = true;
-		btn.textContent = 'Running...';
+		btn.textContent = localize('sidex.ui.running.4977a7', 'Running...');
 
 		const prev = card.querySelector('.sidex-settings-diag-results');
 		if (prev) {
@@ -285,13 +297,14 @@ export class NetworkSection implements SettingsSection {
 			try {
 				const endpoint = await resolveServerEndpoint();
 				if (!endpoint.running) {
-					return { domain: 'Local agent server (loopback)', ok: false };
+					return { domain: localize('sidex.network.localAgent', 'Local agent server (loopback)'), ok: false };
 				}
-				await fetch(`${endpoint.httpUrl}/v1/health`, { signal: AbortSignal.timeout(5000) });
+				const response = await fetch(`${endpoint.httpUrl}/v1/health`, { signal: AbortSignal.timeout(5000) });
+				if (!response.ok) throw new Error(`HTTP ${response.status}`);
 				const latencyMs = Math.round(performance.now() - start);
-				return { domain: 'Local agent server (loopback)', ok: true, latencyMs };
+				return { domain: localize('sidex.network.localAgent', 'Local agent server (loopback)'), ok: true, latencyMs };
 			} catch {
-				return { domain: 'Local agent server (loopback)', ok: false };
+				return { domain: localize('sidex.network.localAgent', 'Local agent server (loopback)'), ok: false };
 			}
 		};
 
@@ -321,7 +334,7 @@ export class NetworkSection implements SettingsSection {
 			if (r.latencyMs !== undefined) {
 				const latency = document.createElement('span');
 				latency.style.cssText = 'color:var(--vscode-descriptionForeground);margin-left:auto;';
-				latency.textContent = `${r.latencyMs}ms`;
+				latency.textContent = localize('sidex.ui.ms.11a5b3', '{0}ms', r.latencyMs);
 				line.appendChild(latency);
 			}
 
@@ -330,7 +343,7 @@ export class NetworkSection implements SettingsSection {
 
 		card.appendChild(resultsEl);
 		btn.disabled = false;
-		btn.textContent = 'Run Diagnostic';
+		btn.textContent = localize('sidex.ui.runDiagnostic.9abc4e', 'Run Diagnostic');
 	}
 
 	dispose(): void {
