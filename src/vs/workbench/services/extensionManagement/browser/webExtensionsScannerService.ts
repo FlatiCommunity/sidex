@@ -600,7 +600,7 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 		}
 		const extensions = await this.galleryService.getExtensions(
 			toGet,
-			{ compatible: true, targetPlatform: TargetPlatform.WEB },
+			{ compatible: true, targetPlatform: await getCurrentExtensionTargetPlatform() },
 			CancellationToken.None
 		);
 		const packsAndDependencies = new Map<string, IExtensionInfo>();
@@ -1291,7 +1291,7 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 				}
 				const migratedLocation = migratePlatformSpecificExtensionGalleryResourceURL(
 					webExtension.location,
-					TargetPlatform.WEB
+					await getCurrentExtensionTargetPlatform()
 				);
 				if (migratedLocation) {
 					update = true;

@@ -2867,15 +2867,16 @@ function createVscodeShim() {
     async executeCommand(id, ...args) {
       let fn = host._commands.get(id);
       if (!fn) {
-        host._checkActivationEvents(`onCommand:${id}`);
-        await new Promise((r) => setTimeout(r, 100));
+        await host._checkActivationEvents(`onCommand:${id}`);
         fn = host._commands.get(id);
       }
       if (fn) return fn(...args);
       return new Promise((resolve, reject) => {
         const reqId = ++host._reqId;
-        host.emit('event', { type: 'executeWorkbenchCommand', reqId, command: id, args });
-        const timeout = setTimeout(() => reject(new Error(`command timed out: ${id}`)), 10000);
+        const timeout = setTimeout(() => {
+          host.removeListener('inbound', handler);
+          reject(new Error(`command timed out: ${id}`));
+        }, 10000);
         const handler = (event) => {
           if (event && event.type === 'workbenchCommandResult' && event.reqId === reqId) {
             clearTimeout(timeout);
@@ -2885,6 +2886,7 @@ function createVscodeShim() {
           }
         };
         host.on('inbound', handler);
+        host.emit('event', { type: 'executeWorkbenchCommand', reqId, command: id, args });
       });
     },
     getCommands(filterInternal) {
@@ -5185,20 +5187,11 @@ if (process.env.SIDEX_EXTENSION_HOST === 'true' && process.send) {
   }
 
   if (initData && initData.extensions) {
-    const skipPrefixes = [
-      'anysphere.cursor',
-      'cursor.',
-      'GitHub.copilot',
-      'sswg.swift-lang',
-      'vscode.github-authentication',
-      'vscode.microsoft-authentication',
-    ];
     for (const ext of initData.extensions) {
       const extPath = uriPathToFsPath(ext.extensionLocation?.path || ext.location?.path);
       if (!extPath) continue;
       try {
         const manifest = host._readManifest(extPath);
-        if (skipPrefixes.some(p => manifest.id.startsWith(p))) continue;
         const configs = manifest.contributes?.configuration;
         if (configs) {
           const sections = Array.isArray(configs) ? configs : [configs];
@@ -5225,9 +5218,10 @@ if (process.env.SIDEX_EXTENSION_HOST === 'true' && process.send) {
           activationEvents.includes('*') ||
           activationEvents.length === 0
         ) {
-          host._activateExtension(manifest.id).catch((e) => {
+          // Populate the complete registry before following dependency edges.
+          queueMicrotask(() => host._activateExtension(manifest.id).catch((e) => {
             log(`auto-activate failed ${manifest.id}: ${e.message}`);
-          });
+          }));
         }
       } catch (e) {
         log(`load extension failed ${extPath}: ${e.message}`);

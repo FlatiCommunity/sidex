@@ -174,3 +174,26 @@ test('unloading removes commands and contribution state so uninstalled code cann
   const state = host.handleMessage({ id: 2, type: 'getExtensionState' });
   assert.equal(state.result.commands.includes('test.unload'), false);
 });
+
+test('vscode.commands.executeCommand also awaits implicit slow activation', async t => {
+  const target = fixture(t, { contributes: { commands: [{ command: 'test.apiSlow', title: 'Slow' }] } }, `
+    const vscode = require('vscode');
+    exports.activate = async context => {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      context.subscriptions.push(vscode.commands.registerCommand('test.apiSlow', () => 'ready'));
+    };
+  `);
+  assert.equal(await host.apiForExtensionFile(path.join(target.location, 'extension.cjs')).commands.executeCommand('test.apiSlow'), 'ready');
+});
+
+test('workbench command replies cannot race listener registration', async t => {
+  const target = fixture(t, {}, 'exports.activate = () => {};');
+  const respond = event => {
+    if (event.type === 'executeWorkbenchCommand') host.emit('inbound', { type: 'workbenchCommandResult', reqId: event.reqId, result: 42 });
+  };
+  host.on('event', respond);
+  t.after(() => host.removeListener('event', respond));
+  const before = host.listenerCount('inbound');
+  assert.equal(await host.apiForExtensionFile(path.join(target.location, 'extension.cjs')).commands.executeCommand('test.immediateWorkbench'), 42);
+  assert.equal(host.listenerCount('inbound'), before);
+});

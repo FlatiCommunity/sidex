@@ -347,7 +347,7 @@ class ClientConnection {
     const searchPaths = getExtensionSearchPaths();
     const extensions = scanExtensionsFallback(searchPaths);
     return {
-      version: '1.93.0',
+      version: '1.110.0',
       commit: undefined,
       parentPid: process.pid,
       environment: {
