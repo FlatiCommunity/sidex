@@ -679,6 +679,13 @@ pub fn run() {
             server::initialize(app.handle());
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                if let Some(store) = window.try_state::<Arc<TerminalStore>>() {
+                    store.kill_window(window.label());
+                }
+            }
+        })
         .on_menu_event(|app, event| {
             let id = event.id().0.as_str();
 
@@ -786,6 +793,8 @@ pub fn run() {
             commands::file_hashes,
             commands::terminal_spawn,
             commands::terminal_write,
+            commands::terminal_write_binary,
+            commands::terminal_acknowledge,
             commands::terminal_resize,
             commands::terminal_kill,
             commands::terminal_get_pid,
@@ -1069,6 +1078,9 @@ pub fn run() {
             // PTY shells, build tasks, debug adapters, and the extension
             // host would otherwise outlive the editor as orphans.
             if let tauri::RunEvent::Exit = event {
+                if let Some(store) = app_handle.try_state::<Arc<TerminalStore>>() {
+                    store.kill_all();
+                }
                 if let Some(store) = app_handle.try_state::<Arc<TaskProcessStore>>() {
                     store.kill_all();
                 }

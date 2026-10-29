@@ -5,10 +5,16 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+#[path = "terminal_stream.rs"]
+mod stream;
+use stream::{OutputFlow, Utf8Decoder};
+
 pub struct PtyHandle {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send>,
+    owner: String,
+    flow: Arc<OutputFlow>,
 }
 
 pub struct TerminalStore {
@@ -23,17 +29,40 @@ impl TerminalStore {
             next_id: Mutex::new(1),
         }
     }
+
+    pub fn kill_window(&self, label: &str) {
+        if let Ok(mut terminals) = self.terminals.lock() {
+            for handle in terminals
+                .values_mut()
+                .filter(|handle| handle.owner == label)
+            {
+                handle.flow.close();
+                let _ = handle.child.kill();
+            }
+        }
+    }
+
+    pub fn kill_all(&self) {
+        if let Ok(mut terminals) = self.terminals.lock() {
+            for handle in terminals.values_mut() {
+                handle.flow.close();
+                let _ = handle.child.kill();
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct TerminalDataEvent {
     terminal_id: u32,
+    client_id: Option<String>,
     data: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct TerminalExitEvent {
     terminal_id: u32,
+    client_id: Option<String>,
     exit_code: i32,
 }
 
@@ -185,7 +214,9 @@ fn resolve_git_bash() -> Option<String> {
 )]
 pub fn terminal_spawn(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, Arc<TerminalStore>>,
+    client_id: Option<String>,
     shell: Option<String>,
     args: Option<Vec<String>>,
     cwd: Option<String>,
@@ -195,8 +226,8 @@ pub fn terminal_spawn(
 ) -> Result<u32, String> {
     let pty_system = native_pty_system();
 
-    let pty_cols = cols.unwrap_or(80);
-    let pty_rows = rows.unwrap_or(24);
+    let pty_cols = cols.unwrap_or(80).max(1);
+    let pty_rows = rows.unwrap_or(24).max(1);
 
     let pair = pty_system
         .openpty(PtySize {
@@ -208,21 +239,18 @@ pub fn terminal_spawn(
         .map_err(|e| format!("Failed to open PTY: {e}"))?;
 
     #[allow(unused_mut)]
-    let mut shell_path = shell.unwrap_or_else(|| {
-        if cfg!(target_os = "windows") {
-            resolve_windows_shell()
-        } else {
-            std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
-        }
-    });
+    let mut shell_path = shell.unwrap_or_else(get_default_shell);
+
+    // Profiles normally contain a program name, e.g. `fish` or `pwsh`, not an
+    // absolute path. Resolve through PATH before validating on Unix.
+    #[cfg(target_os = "windows")]
+    let resolve_bare_git_bash = shell_path.eq_ignore_ascii_case("bash.exe");
+    if let Ok(resolved) = which::which(&shell_path) {
+        shell_path = resolved.to_string_lossy().into_owned();
+    }
 
     #[cfg(target_os = "windows")]
-    if std::path::Path::new(&shell_path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("bash.exe"))
-        && !is_git_bash_path(std::path::Path::new(&shell_path))
-    {
+    if resolve_bare_git_bash && !is_git_bash_path(std::path::Path::new(&shell_path)) {
         if let Some(git_bash) = resolve_git_bash() {
             shell_path = git_bash;
         }
@@ -231,24 +259,7 @@ pub fn terminal_spawn(
     if !cfg!(target_os = "windows") {
         let path = std::path::Path::new(&shell_path);
         if !path.exists() {
-            let fallbacks = ["/bin/zsh", "/bin/bash", "/bin/sh"];
-            for fb in &fallbacks {
-                if std::path::Path::new(fb).exists() {
-                    return terminal_spawn(
-                        app,
-                        state,
-                        Some(fb.to_string()),
-                        args,
-                        cwd,
-                        env,
-                        cols,
-                        rows,
-                    );
-                }
-            }
-            return Err(format!(
-                "Shell '{shell_path}' not found, and no fallback shell available"
-            ));
+            return Err(format!("Shell '{shell_path}' was not found on PATH"));
         }
     }
 
@@ -330,11 +341,6 @@ pub fn terminal_spawn(
     // from this process' own environment.
     drop_session_scoped_env(&mut cmd);
 
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("Failed to spawn shell '{shell_path}': {e}"))?;
-
     let writer = pair
         .master
         .take_writer()
@@ -345,13 +351,23 @@ pub fn terminal_spawn(
         .try_clone_reader()
         .map_err(|e| format!("Failed to get PTY reader: {e}"))?;
 
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("Failed to spawn shell '{shell_path}': {e}"))?;
+    drop(pair.slave);
+
     let id = {
         let mut next = state.next_id.lock().map_err(|e| e.to_string())?;
         let id = *next;
-        *next += 1;
+        *next = next
+            .checked_add(1)
+            .ok_or("Terminal identifier space exhausted")?;
         id
     };
 
+    let owner = window.label().to_string();
+    let flow = Arc::new(OutputFlow::default());
     {
         let mut terminals = state.terminals.lock().map_err(|e| e.to_string())?;
         terminals.insert(
@@ -360,6 +376,8 @@ pub fn terminal_spawn(
                 writer,
                 master: pair.master,
                 child,
+                owner: owner.clone(),
+                flow: Arc::clone(&flow),
             },
         );
     }
@@ -367,50 +385,67 @@ pub fn terminal_spawn(
     let terminal_id = id;
     let state_clone = state.inner().clone();
     std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(n) if n > 0 => {
-                    let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app.emit(
+        let emit = |data: String| {
+            if data.is_empty() {
+                return true;
+            }
+            flow.before_send(&data)
+                && app
+                    .emit_to(
+                        owner.as_str(),
                         "terminal-data",
                         TerminalDataEvent {
                             terminal_id,
-                            data: text,
+                            client_id: client_id.clone(),
+                            data,
                         },
-                    );
+                    )
+                    .is_ok()
+        };
+        let mut decoder = Utf8Decoder::default();
+        let mut buf = [0u8; 8192];
+        let mut disconnected = false;
+        loop {
+            match reader.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    if !emit(decoder.decode(&buf[..n], false)) {
+                        disconnected = true;
+                        break;
+                    }
                 }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Ok(_) | Err(_) => break,
             }
         }
+        if !disconnected {
+            disconnected = !emit(decoder.decode(&[], true));
+        }
+        flow.close();
 
-        let exit_code = {
-            let Ok(mut terminals) = state_clone.terminals.lock() else {
-                let _ = app.emit(
-                    "terminal-exit",
-                    TerminalExitEvent {
-                        terminal_id,
-                        exit_code: -1,
-                    },
-                );
-                return;
-            };
-            let code = if let Some(handle) = terminals.get_mut(&terminal_id) {
-                match handle.child.try_wait() {
-                    Ok(Some(status)) => i32::from(!status.success()),
-                    _ => 0,
-                }
-            } else {
-                0
-            };
-            terminals.remove(&terminal_id);
-            code
-        };
-
-        let _ = app.emit(
+        // Waiting while holding the store lock blocks writes/resizes in every
+        // other terminal. Remove the finished child and reap it outside the lock.
+        let handle = state_clone
+            .terminals
+            .lock()
+            .ok()
+            .and_then(|mut terminals| terminals.remove(&terminal_id));
+        let exit_code = handle.map_or(-1, |mut handle| {
+            if disconnected {
+                // There is no renderer left to consume output. Reap the child
+                // instead of leaving it blocked forever on a full PTY buffer.
+                let _ = handle.child.kill();
+            }
+            handle
+                .child
+                .wait()
+                .map_or(-1, |status| i32::try_from(status.exit_code()).unwrap_or(-1))
+        });
+        let _ = app.emit_to(
+            owner.as_str(),
             "terminal-exit",
             TerminalExitEvent {
                 terminal_id,
+                client_id,
                 exit_code,
             },
         );
@@ -446,6 +481,35 @@ pub fn terminal_write(
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
+pub fn terminal_acknowledge(
+    state: State<'_, Arc<TerminalStore>>,
+    terminal_id: u32,
+    char_count: usize,
+) -> Result<(), String> {
+    let terminals = state.terminals.lock().map_err(|e| e.to_string())?;
+    if let Some(handle) = terminals.get(&terminal_id) {
+        handle.flow.acknowledge(char_count);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn terminal_write_binary(
+    state: State<'_, Arc<TerminalStore>>,
+    terminal_id: u32,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    let mut terminals = state.terminals.lock().map_err(|e| e.to_string())?;
+    let handle = terminals
+        .get_mut(&terminal_id)
+        .ok_or_else(|| format!("Terminal {terminal_id} not found"))?;
+    handle.writer.write_all(&data).map_err(|e| e.to_string())?;
+    handle.writer.flush().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
 pub fn terminal_resize(
     state: State<'_, Arc<TerminalStore>>,
     terminal_id: u32,
@@ -460,8 +524,8 @@ pub fn terminal_resize(
     handle
         .master
         .resize(PtySize {
-            rows,
-            cols,
+            rows: rows.max(1),
+            cols: cols.max(1),
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -474,10 +538,11 @@ pub fn terminal_resize(
 #[allow(clippy::needless_pass_by_value)]
 pub fn terminal_kill(state: State<'_, Arc<TerminalStore>>, terminal_id: u32) -> Result<(), String> {
     let mut terminals = state.terminals.lock().map_err(|e| e.to_string())?;
-    let mut handle = terminals
-        .remove(&terminal_id)
+    let handle = terminals
+        .get_mut(&terminal_id)
         .ok_or_else(|| format!("Terminal {terminal_id} not found"))?;
 
+    handle.flow.close();
     handle
         .child
         .kill()
@@ -562,7 +627,7 @@ pub fn check_shell_exists(path: String) -> bool {
         return std::path::Path::new(&path).exists() || which::which(&path).is_ok();
     }
 
-    std::path::Path::new(&path).exists()
+    std::path::Path::new(&path).is_file() || which::which(&path).is_ok()
 }
 
 #[tauri::command]

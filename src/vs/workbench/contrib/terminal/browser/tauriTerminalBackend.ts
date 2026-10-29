@@ -37,6 +37,8 @@ import { ITerminalInstanceService, ITerminalService } from './terminal.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { TerminalEventBuffer } from './terminalEventBuffer.js';
+import { getNativeWorkspace, wslTerminalLaunch } from '../../../../platform/remote/common/nativeWorkspace.js';
 
 let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | undefined;
 let _listen: ((event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void>) | undefined;
@@ -66,21 +68,6 @@ function getShellBasename(shellPath: string): string {
 	);
 }
 
-// Flow control: the Rust PTY reader counts emitted UTF-8 bytes
-// (String::len) and blocks above a high watermark until the frontend
-// acknowledges consumption, so we must ack with the same unit —
-// TextEncoder gives the UTF-8 byte length of the received string.
-const flowControlEncoder = new TextEncoder();
-
-function ackTerminalData(terminalId: number, data: string): void {
-	_invoke?.('terminal_ack_data', {
-		handle: terminalId,
-		bytes: flowControlEncoder.encode(data).length
-	})?.catch(() => {
-		// Best-effort: acks may race terminal teardown.
-	});
-}
-
 let nextPtyId = 1;
 
 class TauriPty extends Disposable implements ITerminalChildProcess {
@@ -102,6 +89,12 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 	private _backendId: number | undefined;
 	private _unlisten: (() => void) | undefined;
 	private _unlistenExit: (() => void) | undefined;
+	private _stopped = false;
+	private readonly _events = new TerminalEventBuffer(
+		globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+		data => this._onProcessData.fire({ data, trackCommit: false }),
+		code => this._onProcessExit.fire(code)
+	);
 
 	constructor(
 		private readonly _shellLaunchConfig: IShellLaunchConfig,
@@ -146,33 +139,21 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 			} else if (typeof args === 'string') {
 				shellArgs = [args];
 			}
-			const shellBasename = shell ? shell.split('/').pop() || '' : '';
-
-			const dataBuffer: string[] = [];
-			let attached = false;
+			const shellBasename = shell ? getShellBasename(shell) : '';
 
 			this._unlisten = await _listen('terminal-data', event => {
-				const payload = event.payload as { terminal_id: number; data: string };
-				if (this._backendId !== undefined && payload.terminal_id === this._backendId) {
-					if (attached) {
-						this._onProcessData.fire(payload.data);
-					} else {
-						dataBuffer.push(payload.data);
-					}
-					// Acknowledge every received chunk (buffered or not) so the
-					// backend's unacked-bytes counter mirrors what was emitted.
-					ackTerminalData(payload.terminal_id, payload.data);
-				}
+				this._events.data(event.payload as { terminal_id: number; client_id?: string; data: string });
 			});
-
 			this._unlistenExit = await _listen('terminal-exit', event => {
-				const payload = event.payload as { terminal_id: number; exit_code: number };
-				if (this._backendId !== undefined && payload.terminal_id === this._backendId) {
-					this._onProcessExit.fire(payload.exit_code);
-				}
+				this._events.exit(event.payload as { terminal_id: number; client_id?: string; exit_code: number });
 			});
+			if (this._stopped) {
+				this.shutdown(true);
+				return { message: 'Terminal was closed before it started' };
+			}
 
 			const backendId = (await _invoke('terminal_spawn', {
+				clientId: this._events.clientId,
 				shell: shell ?? null,
 				args: shellArgs ?? null,
 				cwd: this._cwd || null,
@@ -182,11 +163,10 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 			})) as number;
 			this._backendId = backendId;
 
-			attached = true;
-			for (const data of dataBuffer) {
-				this._onProcessData.fire(data);
+			if (this._stopped) {
+				this.shutdown(true);
+				return { message: 'Terminal was closed before it started' };
 			}
-			dataBuffer.length = 0;
 
 			let pid = backendId;
 			try {
@@ -194,6 +174,7 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 			} catch {}
 
 			this._onProcessReady.fire({ pid, cwd: this._cwd, windowsPty: undefined });
+			this._events.attach(backendId);
 			this._onDidChangeProperty.fire({ type: ProcessPropertyType.InitialCwd, value: this._cwd });
 
 			const shellName = shellBasename || 'terminal';
@@ -204,12 +185,15 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 
 			return undefined;
 		} catch (e: any) {
+			this.shutdown(true);
 			console.error('[SideX Terminal] Failed to spawn:', e);
 			return { message: e?.message || 'Failed to spawn terminal' };
 		}
 	}
 
 	shutdown(_immediate: boolean): void {
+		this._stopped = true;
+		this._events.dispose();
 		try {
 			if (this._backendId !== undefined && _invoke) {
 				_invoke('terminal_kill', { terminalId: this._backendId }).catch(() => {});
@@ -237,8 +221,19 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 		}
 	}
 
-	acknowledgeDataEvent(_charCount: number): void {}
-	async processBinary(_data: string): Promise<void> {}
+	acknowledgeDataEvent(charCount: number): void {
+		if (this._backendId !== undefined) {
+			_invoke?.('terminal_acknowledge', { terminalId: this._backendId, charCount }).catch(() => {});
+		}
+	}
+	async processBinary(data: string): Promise<void> {
+		if (this._backendId !== undefined && _invoke) {
+			await _invoke('terminal_write_binary', {
+				terminalId: this._backendId,
+				data: Array.from(data, character => character.charCodeAt(0) & 0xff)
+			});
+		}
+	}
 	async getInitialCwd(): Promise<string> {
 		return this._cwd;
 	}
@@ -313,6 +308,19 @@ class TauriTerminalBackend extends Disposable implements ITerminalBackend {
 		_options: ITerminalProcessOptions,
 		_shouldPersist: boolean
 	): Promise<ITerminalChildProcess> {
+		const workspace = getNativeWorkspace();
+		if (workspace?.scheme === 'sidex-wsl') {
+			const explicitCwd =
+				typeof shellLaunchConfig.cwd === 'string' ? shellLaunchConfig.cwd : shellLaunchConfig.cwd?.path;
+			const launch = wslTerminalLaunch(workspace, explicitCwd);
+			return new TauriPty(
+				{ ...shellLaunchConfig, executable: launch.executable, args: launch.args },
+				launch.cwd,
+				cols,
+				rows,
+				_env
+			);
+		}
 		if (!shellLaunchConfig.executable) {
 			const defaultShell = await this.getDefaultSystemShell();
 			shellLaunchConfig.executable = defaultShell;
@@ -339,6 +347,9 @@ class TauriTerminalBackend extends Disposable implements ITerminalBackend {
 	}
 
 	async getDefaultSystemShell(_osOverride?: OperatingSystem): Promise<string> {
+		if (getNativeWorkspace()?.scheme === 'sidex-wsl') {
+			return 'wsl.exe';
+		}
 		await ensureTauri();
 		if (_invoke) {
 			try {
@@ -356,6 +367,19 @@ class TauriTerminalBackend extends Disposable implements ITerminalBackend {
 		_defaultProfile: unknown,
 		_includeDetectedProfiles?: boolean
 	): Promise<ITerminalProfile[]> {
+		const workspace = getNativeWorkspace();
+		if (workspace?.scheme === 'sidex-wsl') {
+			const launch = wslTerminalLaunch(workspace);
+			return [
+				{
+					profileName: `WSL: ${workspace.authority}`,
+					path: launch.executable,
+					args: launch.args,
+					isDefault: true,
+					icon: Codicon.terminalLinux
+				}
+			];
+		}
 		const defaultShell = await this.getDefaultSystemShell();
 		const defaultName = getShellBasename(defaultShell);
 
