@@ -312,18 +312,23 @@ fn read_node_version(binary: &str) -> Option<String> {
         .stderr(Stdio::null())
         .output()
         .ok()
+        .filter(|out| out.status.success())
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
 }
 
 fn is_usable_node(binary: &str) -> bool {
-    Command::new(binary)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
+    read_node_version(binary)
+        .and_then(|version| {
+            version
+                .strip_prefix('v')?
+                .split('.')
+                .next()?
+                .parse::<u32>()
+                .ok()
+        })
+        .is_some_and(|major| major >= 18)
 }
 
 pub fn bundled_node_candidates(app: &AppHandle) -> Vec<PathBuf> {
@@ -334,9 +339,30 @@ pub fn bundled_node_candidates(app: &AppHandle) -> Vec<PathBuf> {
     }
 
     let resource_candidates = if cfg!(target_os = "windows") {
-        vec!["node/node.exe", "bin/node.exe", "node.exe"]
+        vec![
+            "runtime/node/node.exe",
+            "node/node.exe",
+            "bin/node.exe",
+            "node.exe",
+        ]
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        vec![
+            "runtime/node-arm64/bin/node",
+            "runtime/node/bin/node",
+            "node/bin/node",
+            "bin/node",
+            "node",
+        ]
+    } else if cfg!(target_os = "macos") {
+        vec![
+            "runtime/node-x64/bin/node",
+            "runtime/node/bin/node",
+            "node/bin/node",
+            "bin/node",
+            "node",
+        ]
     } else {
-        vec!["node/bin/node", "bin/node", "node"]
+        vec!["runtime/node/bin/node", "node/bin/node", "bin/node", "node"]
     };
 
     for relative in resource_candidates {
@@ -797,7 +823,7 @@ pub async fn extension_platform_bootstrap(
 
     Ok(serde_json::json!({
         "transport": { "kind": "websocket", "endpoint": format!("ws://127.0.0.1:{port}/") },
-        "runtime": { "path": node.path, "version": node.version, "source": "system", "bundled": false },
+        "runtime": { "path": node.path, "version": node.version, "source": node.source, "bundled": node.bundled },
         "paths": {
             "serverScript": dunce::simplified(&resolve_server_script(&app)).to_string_lossy(),
             "builtinExtensionsDir": dunce::simplified(&resolve_builtin_extensions_dir(&app)).to_string_lossy(),
@@ -858,7 +884,10 @@ pub async fn extension_platform_stop(
 }
 
 #[tauri::command]
-pub async fn extension_platform_init_data(app: AppHandle, locale: Option<String>) -> Result<String, String> {
+pub async fn extension_platform_init_data(
+    app: AppHandle,
+    locale: Option<String>,
+) -> Result<String, String> {
     let paths = extension_search_paths(&app);
     let manifests = scan_extensions(&app, &paths);
     let descriptions = build_extension_descriptions(&manifests);
@@ -873,9 +902,14 @@ fn requested_app_language(locale: Option<&str>) -> String {
         .filter(|value| {
             !value.is_empty()
                 && value.len() <= 35
-                && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
         })
-        .map_or_else(|| "en".to_string(), |value| value.replace('_', "-").to_ascii_lowercase())
+        .map_or_else(
+            || "en".to_string(),
+            |value| value.replace('_', "-").to_ascii_lowercase(),
+        )
 }
 
 #[cfg(test)]

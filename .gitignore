@@ -62,6 +62,10 @@ sidexai/aws-credentials.json
 
 # ── Tauri generated ──────────────────────────────────────────────────────────
 src-tauri/gen/
+/src-tauri/runtime/*
+!/src-tauri/runtime/README.md
+/result
+/result-*
 
 # ── Test / Coverage ──────────────────────────────────────────────────────────
 coverage/

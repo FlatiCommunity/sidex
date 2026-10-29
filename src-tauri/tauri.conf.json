@@ -53,7 +53,8 @@
     "longDescription": "SideX is a fast, lightweight, open-source code editor built for developers.",
     "resources": [
       "extension-host/*",
-      "shell-integration/*"
+      "shell-integration/*",
+      "runtime/**/*"
     ],
     "icon": [
       "icons/32x32.png",
@@ -64,12 +65,22 @@
     ],
     "macOS": {
       "entitlements": "entitlements.plist",
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "12.0",
       "infoPlist": "Info.plist"
     },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "both",
+        "languages": [
+          "English",
+          "Russian",
+          "SimpChinese",
+          "TradChinese"
+        ],
+        "displayLanguageSelector": true
       }
     },
     "linux": {
@@ -79,6 +90,52 @@
           "libgtk-3-0"
         ]
       }
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "code-workspace"
+        ],
+        "name": "SideX Workspace",
+        "role": "Editor",
+        "rank": "Alternate",
+        "mimeType": "application/x-code-workspace"
+      },
+      {
+        "ext": [
+          "txt",
+          "md",
+          "markdown",
+          "rs",
+          "py",
+          "js",
+          "ts",
+          "jsx",
+          "tsx",
+          "json",
+          "jsonc",
+          "css",
+          "html",
+          "yaml",
+          "yml",
+          "toml",
+          "xml",
+          "c",
+          "h",
+          "cpp",
+          "hpp",
+          "cs",
+          "go",
+          "java",
+          "sh",
+          "ps1",
+          "sql"
+        ],
+        "name": "Source Code",
+        "role": "Editor",
+        "rank": "Alternate",
+        "mimeType": "text/plain"
+      }
+    ]
   }
 }
