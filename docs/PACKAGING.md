@@ -73,7 +73,7 @@ Without an updater key pair, updater artifact generation is disabled. Release co
 
 Artifact filenames include the matrix architecture, for example `macos-arm64--SideX.app.tar.gz`, so parallel macOS jobs cannot overwrite each other. Collection includes both Debian and RPM packages and uses the current Tauri v2 signature filenames. Each target includes a checksum list and an artifact inventory. The package-manifest generator below accepts these prefixed filenames as well as original Tauri filenames.
 
-After every build succeeds, the workflow creates or updates a **draft** GitHub Release in the current repository. It refuses to modify an already published release and does not mark a draft as the latest release. Publishing a draft remains a separate maintainer action. This workflow has been validated through helper tests and a real local Tauri signature fixture; it has not been dispatched during this work.
+After every build succeeds, the workflow creates or updates a **draft** GitHub Release in the current repository. An existing tag must point to the workflow's commit, including when the tag is annotated. The workflow refuses to modify an already published release and does not mark a draft as the latest release. Publishing a draft remains a separate maintainer action. This workflow has been validated through helper tests and a real local Tauri signature fixture; it has not been dispatched during this work.
 
 ## Generate package-manager manifests
 

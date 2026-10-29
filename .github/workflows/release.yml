@@ -145,12 +145,28 @@ jobs:
           pattern: sidex-*
           path: all-artifacts
           merge-multiple: true
-      - name: Refuse to change an already published release
+      - name: Protect existing releases and tag commits
         uses: actions/github-script@v7
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         with:
           script: |
+            let tag;
+            try {
+              tag = (await github.rest.git.getRef({
+                ...context.repo, ref: `tags/${process.env.RELEASE_TAG}`
+              })).data.object;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            for (let depth = 0; tag?.type === 'tag' && depth < 8; depth++) {
+              tag = (await github.rest.git.getTag({
+                ...context.repo, tag_sha: tag.sha
+              })).data.object;
+            }
+            if (tag && (tag.type !== 'commit' || tag.sha !== context.sha)) {
+              throw new Error('The existing release tag does not point to this workflow commit. Select that tag or use a new matching version.');
+            }
             let release;
             try {
               release = (await github.rest.repos.getReleaseByTag({
