@@ -21,9 +21,11 @@ export interface ThemeInfo {
 export interface ThemeData {
 	workbenchColors: Record<string, string>;
 	tokenColors: Array<{
-		scope: string[];
-		settings: { foreground?: string; fontStyle?: string };
+		scope?: string | string[];
+		settings: { foreground?: string; background?: string; fontStyle?: string };
 	}>;
+	semanticTokenColors: Record<string, string | Record<string, unknown>>;
+	semanticHighlighting: boolean;
 }
 
 export const ISideXThemeService = createDecorator<ISideXThemeService>('sidexThemeService');

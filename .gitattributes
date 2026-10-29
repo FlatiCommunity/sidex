@@ -1,0 +1,2 @@
+# Vendored resources must retain the exact upstream bytes on every platform.
+public/extensions/** -text -whitespace linguist-vendored

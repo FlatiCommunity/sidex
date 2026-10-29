@@ -120,14 +120,9 @@ pub struct ThemeRegistry {
 }
 
 impl ThemeRegistry {
-    /// Create a registry pre-loaded with the four built-in themes.
+    /// Create a registry with the complete bundled VS Code theme catalog.
     pub fn new() -> Self {
-        let builtin = vec![
-            crate::default_themes::dark_modern(),
-            crate::default_themes::light_modern(),
-            crate::default_themes::hc_black(),
-            crate::default_themes::hc_light(),
-        ];
+        let builtin = crate::builtin::parsed_themes();
         let active_theme_id = builtin[0].name.clone();
 
         Self {

@@ -61,7 +61,7 @@ impl Theme {
 
         let workbench_colors: WorkbenchColors = v
             .get("colors")
-            .map(|c| serde_json::from_value(c.clone()))
+            .map(|c| serde_json::from_value(normalize_workbench_keys(c)))
             .transpose()
             .context("failed to parse colors")?
             .unwrap_or_default();
@@ -85,6 +85,31 @@ impl Theme {
     pub fn default_light() -> Self {
         crate::default_themes::light_modern()
     }
+}
+
+// VS Code serializes color IDs as `editor.background`; older native SideX
+// themes used `editorBackground`. Accept both without dropping real themes.
+fn normalize_workbench_keys(colors: &Value) -> Value {
+    let Some(object) = colors.as_object() else {
+        return colors.clone();
+    };
+    Value::Object(
+        object
+            .iter()
+            .map(|(key, value)| {
+                let mut parts = key.split('.');
+                let mut normalized = parts.next().unwrap_or_default().to_owned();
+                for part in parts {
+                    let mut chars = part.chars();
+                    if let Some(first) = chars.next() {
+                        normalized.extend(first.to_uppercase());
+                    }
+                    normalized.extend(chars);
+                }
+                (normalized, value.clone())
+            })
+            .collect(),
+    )
 }
 
 // ── Token color parsing ──────────────────────────────────────────────────────

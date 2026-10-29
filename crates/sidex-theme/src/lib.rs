@@ -6,6 +6,7 @@
 //! semantic token coloring, and an RGBA color type with hex parsing.
 
 pub mod color;
+pub mod builtin;
 pub mod default_themes;
 pub mod icon_theme;
 pub mod product_icons;

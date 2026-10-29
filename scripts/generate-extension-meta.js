@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { validateBuiltinAssets, readBuiltinThemes } from './builtin-assets.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -9,6 +10,9 @@ const extensionsDir = resolve(__dirname, '..', 'extensions');
 const bundledThemesDir = resolve(__dirname, '..', 'public', 'extensions');
 const metaOutputPath = resolve(__dirname, '..', 'extensions-meta.json');
 const jsOutputPath = resolve(__dirname, '..', 'public', 'builtin-extensions.js');
+
+validateBuiltinAssets();
+writeFileSync(resolve(__dirname, '..', 'crates/sidex-theme/src/builtin_themes.json'), JSON.stringify(readBuiltinThemes()));
 
 function writeBuiltinExtensions(descriptors) {
   writeFileSync(metaOutputPath, JSON.stringify(descriptors, null, 2));
@@ -70,7 +74,7 @@ function addExtensions(directory) {
   }
 }
 
-// Bundled themes are always available, even without the optional VS Code extensions catalog.
+// Pinned themes, grammars, language configurations and snippets are always available offline.
 // Prefer the pinned version over a second copy in extensions/.
 addExtensions(bundledThemesDir);
 addExtensions(extensionsDir);

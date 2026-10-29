@@ -337,7 +337,9 @@ export class ThemeRegistry<T extends IThemeData> implements IDisposable {
 		}
 		for (const theme of this.listedBuiltInThemes) {
 			if (theme.id === themeId) {
-				return theme;
+				// Older SideX builds persisted a palette-only fallback. Prefer the
+				// bundled VS Code theme with its real token/semantic colors.
+				return this.extensionThemes.find(candidate => candidate.settingsId === theme.settingsId) ?? theme;
 			}
 		}
 		const allThemes = this.getThemes();
@@ -375,7 +377,8 @@ export class ThemeRegistry<T extends IThemeData> implements IDisposable {
 	}
 
 	public getThemes(): T[] {
-		return [...this.listedBuiltInThemes, ...this.extensionThemes];
+		const installedSettings = new Set(this.extensionThemes.map(theme => theme.settingsId));
+		return [...this.listedBuiltInThemes.filter(theme => !installedSettings.has(theme.settingsId)), ...this.extensionThemes];
 	}
 
 	public getMarketplaceThemes(manifest: any, extensionLocation: URI, extensionData: ExtensionData): T[] {
