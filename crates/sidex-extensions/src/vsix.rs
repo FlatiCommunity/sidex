@@ -69,6 +69,10 @@ pub struct ValidationResult {
 // ---------------------------------------------------------------------------
 
 /// Unpacks a `.vsix` file into a `VsixPackage` in memory.
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep ordered archive limits, path validation, and extraction together for auditability"
+)]
 pub fn unpack_vsix(vsix_path: &Path) -> Result<VsixPackage> {
     let file = std::fs::File::open(vsix_path)
         .with_context(|| format!("failed to open .vsix: {}", vsix_path.display()))?;
