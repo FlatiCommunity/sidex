@@ -49,6 +49,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { IHostService } from '../../../services/host/browser/host.js';
 import { invoke } from '@tauri-apps/api/core';
 import { WSL_SCHEME } from '../../../../platform/files/browser/wslFileSystemProvider.js';
+import { connectSshWorkspace } from './sshWorkspace.js';
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -171,7 +172,7 @@ registerAction2(
 			try {
 				if (type === 'ssh') {
 					const host = payload as SshHost;
-					await remoteService.connectSsh(host.host, host.user ?? 'root', host.port ?? undefined, { kind: 'agent' });
+					await connectSshWorkspace(host, accessor.get(IQuickInputService), remoteService, accessor.get(IHostService));
 				}
 				else if (type === 'wsl') {
 					await openWslWorkspace((payload as WslDistro).name, accessor.get(IQuickInputService), accessor.get(IHostService));
@@ -233,7 +234,7 @@ registerAction2(
 				{
 					label: '$(terminal-cmd) ' + localize('remote.pick.connectToHost', 'Connect to Host…'),
 					description: localize('remote.pick.sshProvider', 'Remote-SSH'),
-					action: () => pickAndConnectSsh(quickInput, notifications, remoteService)
+					action: () => pickAndConnectSsh(quickInput, notifications, remoteService, accessor.get(IHostService))
 				},
 				{
 					label: '$(terminal-linux) ' + localize('remote.pick.wsl', 'Connect to WSL…'),
@@ -367,12 +368,22 @@ registerAction2(
 	}
 );
 
+registerAction2(class ConnectSshHost extends Action2 {
+	constructor() {
+		super({ id: 'sidex.remote.connectSsh', title: localize2('remote.ssh.connect', 'Connect to SSH Host…'), f1: true });
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await pickAndConnectSsh(accessor.get(IQuickInputService), accessor.get(INotificationService), accessor.get(ISideXRemoteService), accessor.get(IHostService));
+	}
+});
+
 // ── Remote-type connect flows ────────────────────────────────────────────────
 
 async function pickAndConnectSsh(
 	quickInput: IQuickInputService,
 	notifications: INotificationService,
-	remoteService: ISideXRemoteService
+	remoteService: ISideXRemoteService,
+	hostService: IHostService
 ): Promise<void> {
 	const hosts = await remoteService.listSshHosts();
 
@@ -384,7 +395,7 @@ async function pickAndConnectSsh(
 	const items: HostItem[] = [
 		...hosts.map(h => ({
 			label: `$(vm) ${h.host}`,
-			description: `${h.user ?? 'root'}@${h.hostname ?? h.host}${h.port ? `:${h.port}` : ''}`,
+			description: `${h.user ? `${h.user}@` : ''}${h.hostname ?? h.host}${h.port ? `:${h.port}` : ''}`,
 			host: h
 		})),
 		{ label: '', kind: 'separator' } as HostItem,
@@ -404,35 +415,8 @@ async function pickAndConnectSsh(
 		return;
 	}
 
-	let user: string;
-	let host: string;
-	let port: number | undefined;
-
-	if (pick.manual) {
-		const raw = await quickInput.input({
-			prompt: localize('remote.ssh.enter', 'Enter user@host[:port]'),
-			placeHolder: 'root@example.com:22'
-		});
-		if (!raw) {
-			return;
-		}
-		const match = raw.match(/^(?:([^@]+)@)?([^:]+)(?::(\d+))?$/);
-		if (!match) {
-			notifications.error(localize('remote.ssh.invalid', 'Invalid host format'));
-			return;
-		}
-		user = match[1] ?? 'root';
-		host = match[2];
-		port = match[3] ? Number(match[3]) : undefined;
-	} else {
-		host = pick.host!.host;
-		user = pick.host!.user ?? 'root';
-		port = pick.host!.port ?? undefined;
-	}
-
 	try {
-		await remoteService.connectSsh(host, user, port, { kind: 'agent' });
-		notifications.info(localize('remote.ssh.connected', 'Connected to {0}@{1}', user, host));
+		await connectSshWorkspace(pick.host, quickInput, remoteService, hostService);
 	} catch (err) {
 		notifications.error(localize('remote.ssh.failed', 'SSH connection failed: {0}', String(err)));
 	}

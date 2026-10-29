@@ -7,12 +7,12 @@ const LOW_WATERMARK: usize = 5_000;
 
 /// Preserve a UTF-8 code point split across arbitrary PTY read boundaries.
 #[derive(Default)]
-pub(super) struct Utf8Decoder {
+pub(crate) struct Utf8Decoder {
     pending: Vec<u8>,
 }
 
 impl Utf8Decoder {
-    pub(super) fn decode(&mut self, bytes: &[u8], final_chunk: bool) -> String {
+    pub(crate) fn decode(&mut self, bytes: &[u8], final_chunk: bool) -> String {
         self.pending.extend_from_slice(bytes);
         let mut result = String::new();
         let mut consumed = 0;

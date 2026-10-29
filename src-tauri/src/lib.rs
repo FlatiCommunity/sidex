@@ -553,6 +553,7 @@ pub fn run() {
         .manage(Arc::new(SettingsStore::new()))
         .manage(Arc::new(sidex_extension_api::CommandRegistry::new()))
         .manage(Arc::new(RemoteManagerStore::new()))
+        .manage(Arc::new(commands::remote_ssh::SshTerminalStore::default()))
         .manage(Arc::new(
             WasmExtensionRuntime::new().expect("failed to initialize WASM runtime"),
         ))
@@ -734,6 +735,9 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 if let Some(store) = window.try_state::<Arc<TerminalStore>>() {
                     store.kill_window(window.label());
+                }
+                if let Some(store) = window.try_state::<Arc<commands::remote_ssh::SshTerminalStore>>() {
+                    store.close_window(window.label());
                 }
             }
         })
@@ -1075,6 +1079,14 @@ pub fn run() {
             commands::remote_list_wsl_distros,
             commands::remote_list_containers,
             commands::remote_connect_ssh,
+            commands::remote_ssh::remote_ssh_probe_host,
+            commands::remote_ssh::remote_ssh_file_request,
+            commands::remote_ssh::remote_ssh_terminal_spawn,
+            commands::remote_ssh::remote_ssh_terminal_write,
+            commands::remote_ssh::remote_ssh_terminal_write_binary,
+            commands::remote_ssh::remote_ssh_terminal_resize,
+            commands::remote_ssh::remote_ssh_terminal_acknowledge,
+            commands::remote_ssh::remote_ssh_terminal_kill,
             commands::remote_connect_wsl,
             commands::remote_connect_container,
             commands::remote_connect_codespace,

@@ -20,7 +20,7 @@ use sidex_remote::{
 // ── State ───────────────────────────────────────────────────────────
 
 pub struct RemoteManagerStore {
-    inner: Arc<Mutex<RemoteManager>>,
+    pub(crate) inner: Arc<Mutex<RemoteManager>>,
 }
 
 impl RemoteManagerStore {
@@ -46,6 +46,7 @@ pub struct SshHostInfo {
     pub port: Option<u16>,
     pub user: Option<String>,
     pub identity_file: Option<String>,
+    pub proxy_jump: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,7 +113,12 @@ impl From<SshAuthPayload> for SshAuth {
         match p {
             SshAuthPayload::Password { password } => SshAuth::Password(password),
             SshAuthPayload::KeyFile { path, passphrase } => SshAuth::KeyFile {
-                path: PathBuf::from(path),
+                path: if let Some(relative) = path.strip_prefix("~/") {
+                    dirs::home_dir()
+                        .map_or_else(|| PathBuf::from(&path), |home| home.join(relative))
+                } else {
+                    PathBuf::from(path)
+                },
                 passphrase,
             },
             SshAuthPayload::Agent => SshAuth::Agent,
@@ -162,6 +168,7 @@ pub fn remote_list_ssh_hosts() -> Result<Vec<SshHostInfo>, String> {
             port: h.port,
             user: h.user,
             identity_file: h.identity_file.map(|p| p.to_string_lossy().into_owned()),
+            proxy_jump: h.proxy_jump,
         })
         .collect())
 }
@@ -172,16 +179,26 @@ pub async fn remote_connect_ssh(
     user: String,
     port: Option<u16>,
     auth: SshAuthPayload,
-    store: State<'_, RemoteManagerStore>,
+    trusted_fingerprint: Option<String>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteConnectionEntry, String> {
     let port = port.unwrap_or(22);
+    if host.trim().is_empty()
+        || host.contains(char::is_whitespace)
+        || host.contains(char::is_control)
+        || user.is_empty()
+        || user.contains(char::is_control)
+        || port == 0
+    {
+        return Err("invalid SSH host, username or port".into());
+    }
     let auth: SshAuth = auth.into();
 
     let mut mgr = store.inner.lock().await;
     let id = mgr
-        .connect_ssh_as(&user, &host, port, auth, Some(30))
+        .connect_ssh_as_trusted(&user, &host, port, auth, Some(30), trusted_fingerprint)
         .await
-        .map_err(|e| format!("SSH connect failed: {e}"))?;
+        .map_err(|e| format!("SSH connect failed: {e:#}"))?;
 
     let info = mgr
         .active_connections()
@@ -195,7 +212,7 @@ pub async fn remote_connect_ssh(
 pub async fn remote_exec_ssh(
     connection_id: u64,
     command: String,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteExecResult, String> {
     let mgr = store.inner.lock().await;
     let transport = mgr
@@ -307,7 +324,7 @@ pub async fn remote_codespaces_list(github_token: String) -> Result<Vec<Codespac
 #[tauri::command]
 pub async fn remote_connect_wsl(
     distro: String,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteConnectionEntry, String> {
     let mut mgr = store.inner.lock().await;
     let id = mgr
@@ -325,7 +342,7 @@ pub async fn remote_connect_wsl(
 #[tauri::command]
 pub async fn remote_connect_container(
     config_path: String,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteConnectionEntry, String> {
     let path = PathBuf::from(config_path);
     let mut mgr = store.inner.lock().await;
@@ -345,7 +362,7 @@ pub async fn remote_connect_container(
 pub async fn remote_connect_codespace(
     name: String,
     github_token: String,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteConnectionEntry, String> {
     let mut mgr = store.inner.lock().await;
     let id = mgr
@@ -363,7 +380,7 @@ pub async fn remote_connect_codespace(
 #[tauri::command]
 pub async fn remote_disconnect(
     connection_id: u64,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<(), String> {
     let mut mgr = store.inner.lock().await;
     mgr.disconnect(ConnectionId(connection_id))
@@ -373,7 +390,7 @@ pub async fn remote_disconnect(
 
 #[tauri::command]
 pub async fn remote_active_connections(
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<Vec<RemoteConnectionEntry>, String> {
     let mgr = store.inner.lock().await;
     Ok(mgr.active_connections().into_iter().map(to_entry).collect())

@@ -101,7 +101,8 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 		private readonly _cwd: string,
 		private _cols: number,
 		private _rows: number,
-		private readonly _env?: IProcessEnvironment
+		private readonly _env?: IProcessEnvironment,
+		private readonly _sshAuthority?: string
 	) {
 		super();
 		this.id = nextPtyId++;
@@ -141,10 +142,10 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 			}
 			const shellBasename = shell ? getShellBasename(shell) : '';
 
-			this._unlisten = await _listen('terminal-data', event => {
+			this._unlisten = await _listen(this._sshAuthority ? 'ssh-terminal-data' : 'terminal-data', event => {
 				this._events.data(event.payload as { terminal_id: number; client_id?: string; data: string });
 			});
-			this._unlistenExit = await _listen('terminal-exit', event => {
+			this._unlistenExit = await _listen(this._sshAuthority ? 'ssh-terminal-exit' : 'terminal-exit', event => {
 				this._events.exit(event.payload as { terminal_id: number; client_id?: string; exit_code: number });
 			});
 			if (this._stopped) {
@@ -152,7 +153,8 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 				return { message: 'Terminal was closed before it started' };
 			}
 
-			const backendId = (await _invoke('terminal_spawn', {
+			const backendId = (await _invoke(this._sshAuthority ? 'remote_ssh_terminal_spawn' : 'terminal_spawn', {
+				authority: this._sshAuthority,
 				clientId: this._events.clientId,
 				shell: shell ?? null,
 				args: shellArgs ?? null,
@@ -170,7 +172,7 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 
 			let pid = backendId;
 			try {
-				pid = (await _invoke('terminal_get_pid', { terminalId: backendId })) as number;
+				if (!this._sshAuthority) pid = (await _invoke('terminal_get_pid', { terminalId: backendId })) as number;
 			} catch {}
 
 			this._onProcessReady.fire({ pid, cwd: this._cwd, windowsPty: undefined });
@@ -180,14 +182,14 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 			const shellName = shellBasename || 'terminal';
 			this._onDidChangeProperty.fire({
 				type: ProcessPropertyType.Title,
-				value: shellName
+				value: this._sshAuthority ? `SSH: ${this._sshAuthority}` : shellName
 			} as IProcessProperty<ProcessPropertyType.Title>);
 
 			return undefined;
 		} catch (e: any) {
 			this.shutdown(true);
 			console.error('[SideX Terminal] Failed to spawn:', e);
-			return { message: e?.message || 'Failed to spawn terminal' };
+			return { message: e instanceof Error ? e.message : String(e) };
 		}
 	}
 
@@ -196,7 +198,7 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 		this._events.dispose();
 		try {
 			if (this._backendId !== undefined && _invoke) {
-				_invoke('terminal_kill', { terminalId: this._backendId }).catch(() => {});
+				_invoke(this._sshAuthority ? 'remote_ssh_terminal_kill' : 'terminal_kill', { terminalId: this._backendId }).catch(() => {});
 			}
 			this._unlisten?.();
 			this._unlistenExit?.();
@@ -209,7 +211,7 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 
 	input(data: string): void {
 		if (this._backendId !== undefined && _invoke) {
-			_invoke('terminal_write', { terminalId: this._backendId, data }).catch(() => {});
+			_invoke(this._sshAuthority ? 'remote_ssh_terminal_write' : 'terminal_write', { terminalId: this._backendId, data }).catch(() => {});
 		}
 	}
 
@@ -217,18 +219,18 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 		this._cols = cols;
 		this._rows = rows;
 		if (this._backendId !== undefined && _invoke) {
-			_invoke('terminal_resize', { terminalId: this._backendId, cols, rows }).catch(() => {});
+			_invoke(this._sshAuthority ? 'remote_ssh_terminal_resize' : 'terminal_resize', { terminalId: this._backendId, cols, rows }).catch(() => {});
 		}
 	}
 
 	acknowledgeDataEvent(charCount: number): void {
 		if (this._backendId !== undefined) {
-			_invoke?.('terminal_acknowledge', { terminalId: this._backendId, charCount }).catch(() => {});
+			_invoke?.(this._sshAuthority ? 'remote_ssh_terminal_acknowledge' : 'terminal_acknowledge', { terminalId: this._backendId, charCount }).catch(() => {});
 		}
 	}
 	async processBinary(data: string): Promise<void> {
 		if (this._backendId !== undefined && _invoke) {
-			await _invoke('terminal_write_binary', {
+			await _invoke(this._sshAuthority ? 'remote_ssh_terminal_write_binary' : 'terminal_write_binary', {
 				terminalId: this._backendId,
 				data: Array.from(data, character => character.charCodeAt(0) & 0xff)
 			});
@@ -309,6 +311,10 @@ class TauriTerminalBackend extends Disposable implements ITerminalBackend {
 		_shouldPersist: boolean
 	): Promise<ITerminalChildProcess> {
 		const workspace = getNativeWorkspace();
+		if (workspace?.scheme === 'sidex-ssh') {
+			const explicitCwd = typeof shellLaunchConfig.cwd === 'string' ? shellLaunchConfig.cwd : shellLaunchConfig.cwd?.path;
+			return new TauriPty(shellLaunchConfig, explicitCwd?.startsWith('/') ? explicitCwd : workspace.path, cols, rows, undefined, workspace.authority);
+		}
 		if (workspace?.scheme === 'sidex-wsl') {
 			const explicitCwd =
 				typeof shellLaunchConfig.cwd === 'string' ? shellLaunchConfig.cwd : shellLaunchConfig.cwd?.path;
@@ -347,6 +353,7 @@ class TauriTerminalBackend extends Disposable implements ITerminalBackend {
 	}
 
 	async getDefaultSystemShell(_osOverride?: OperatingSystem): Promise<string> {
+		if (getNativeWorkspace()?.scheme === 'sidex-ssh') return 'ssh';
 		if (getNativeWorkspace()?.scheme === 'sidex-wsl') {
 			return 'wsl.exe';
 		}
@@ -368,6 +375,9 @@ class TauriTerminalBackend extends Disposable implements ITerminalBackend {
 		_includeDetectedProfiles?: boolean
 	): Promise<ITerminalProfile[]> {
 		const workspace = getNativeWorkspace();
+		if (workspace?.scheme === 'sidex-ssh') {
+			return [{ profileName: `SSH: ${workspace.authority}`, path: 'ssh', isDefault: true, icon: Codicon.remote }];
+		}
 		if (workspace?.scheme === 'sidex-wsl') {
 			const launch = wslTerminalLaunch(workspace);
 			return [

@@ -39,6 +39,7 @@ pub mod providers;
 #[allow(dead_code)]
 pub mod proxy;
 pub mod remote;
+pub mod remote_ssh;
 #[allow(dead_code)]
 pub mod search;
 pub mod secrets;

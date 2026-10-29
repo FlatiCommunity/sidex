@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[path = "terminal_stream.rs"]
-mod stream;
+pub(super) mod stream;
 use stream::{OutputFlow, Utf8Decoder};
 
 pub struct PtyHandle {

@@ -88,6 +88,7 @@ import {
 	IWorkspaceTrustManagementService
 } from '../../platform/workspace/common/workspaceTrust.js';
 import { TauriFileSystemProvider } from '../../platform/files/browser/tauriFileSystemProvider.js';
+import { TauriSshFileSystemProvider, SSH_SCHEME } from '../../platform/files/browser/tauriSshFileSystemProvider.js';
 import { WslFileSystemProvider, WSL_SCHEME } from '../../platform/files/browser/wslFileSystemProvider.js';
 import { TauriUserDataProvider } from '../../platform/files/browser/tauriUserDataProvider.js';
 import { IOpenerService } from '../../platform/opener/common/opener.js';
@@ -662,6 +663,7 @@ export class BrowserMain extends Disposable {
 			logService.info('[SideX] Registered TauriUserDataProvider for vscode-userdata:// scheme');
 
 			fileService.registerProvider(WSL_SCHEME, this._register(new WslFileSystemProvider()));
+			fileService.registerProvider(SSH_SCHEME, this._register(new TauriSshFileSystemProvider()));
 
 			const fileProvider = new TauriFileSystemProvider();
 			fileService.registerProvider(Schemas.file, fileProvider);

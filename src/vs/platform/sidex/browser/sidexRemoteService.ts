@@ -22,6 +22,7 @@ export interface SshHost {
 	port: number | null;
 	user: string | null;
 	identityFile: string | null;
+	proxyJump?: string | null;
 }
 
 export interface WslDistro {
@@ -74,6 +75,7 @@ interface RawSshHost {
 	port: number | null;
 	user: string | null;
 	identity_file: string | null;
+	proxy_jump?: string | null;
 }
 
 interface RawWslDistro {
@@ -113,7 +115,8 @@ function toHost(r: RawSshHost): SshHost {
 		hostname: r.hostname,
 		port: r.port,
 		user: r.user,
-		identityFile: r.identity_file
+		identityFile: r.identity_file,
+		proxyJump: r.proxy_jump
 	};
 }
 
@@ -159,12 +162,13 @@ export class SideXRemoteService {
 		return raw.map(toHost);
 	}
 
-	async connectSsh(host: string, user: string, port: number | undefined, auth: SshAuth): Promise<RemoteConnection> {
+	async connectSsh(host: string, user: string, port: number | undefined, auth: SshAuth, trustedFingerprint?: string): Promise<RemoteConnection> {
 		const raw = await invoke<RawConnection>('remote_connect_ssh', {
 			host,
 			user,
 			port: port ?? null,
-			auth
+			auth,
+			trustedFingerprint: trustedFingerprint ?? null
 		});
 		return toConnection(raw);
 	}
