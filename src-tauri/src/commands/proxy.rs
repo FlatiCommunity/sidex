@@ -1,9 +1,11 @@
+use super::settings::SettingsStore;
 use base64::Engine as _;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use tauri::State;
 
 const MAX_RESPONSE_BYTES: usize = 50 * 1024 * 1024; // 50 MB
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -93,6 +95,46 @@ fn is_host_allowed(url: &reqwest::Url) -> bool {
     false
 }
 
+/// Only the user's application settings can authorize an additional gallery origin.
+/// Workspace files and subdomains of a custom registry never grant proxy access.
+fn is_configured_gallery_allowed(url: &reqwest::Url, user: &serde_json::Value) -> bool {
+    let configured = user
+        .get("sidex.extensions.galleryUrl")
+        .and_then(serde_json::Value::as_str);
+    let origins = user
+        .get("sidex.extensions.allowedGalleryOrigins")
+        .and_then(serde_json::Value::as_array);
+    configured
+        .into_iter()
+        .chain(
+            origins
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str),
+        )
+        .any(|value| {
+            let Ok(allowed) = reqwest::Url::parse(value) else {
+                return false;
+            };
+            allowed.scheme() == "https"
+                && allowed.username().is_empty()
+                && allowed.password().is_none()
+                && allowed.query().is_none()
+                && allowed.fragment().is_none()
+                && allowed.origin() == url.origin()
+        })
+}
+
+fn is_proxy_allowed(url: &reqwest::Url, settings: &SettingsStore) -> bool {
+    if is_host_allowed(url) {
+        return true;
+    }
+    settings
+        .inner
+        .read()
+        .is_ok_and(|settings| is_configured_gallery_allowed(url, settings.user_layer()))
+}
+
 /// Process-wide shared HTTP client. One client = one connection pool
 /// shared across all proxy requests. This eliminates the per-request
 /// TCP + TLS handshake overhead that was causing 8-10 s cold requests.
@@ -165,13 +207,14 @@ pub async fn fetch_url_text(url: String) -> Result<String, String> {
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub async fn proxy_request(
+    state: State<'_, Arc<SettingsStore>>,
     url: String,
     method: String,
     headers: HashMap<String, String>,
     body: Option<String>,
 ) -> Result<String, String> {
     let parsed = validate_url(&url)?;
-    if !is_host_allowed(&parsed) {
+    if !is_proxy_allowed(&parsed, &state) {
         return Err(format!(
             "proxy requests to '{}' are not allowed",
             parsed.host_str().unwrap_or("unknown")
@@ -215,13 +258,14 @@ pub struct ProxyResponse {
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub async fn proxy_request_full(
+    state: State<'_, Arc<SettingsStore>>,
     url: String,
     method: String,
     headers: HashMap<String, String>,
     body: Option<String>,
 ) -> Result<ProxyResponse, String> {
     let parsed = validate_url(&url)?;
-    if !is_host_allowed(&parsed) {
+    if !is_proxy_allowed(&parsed, &state) {
         return Err(format!(
             "proxy requests to '{}' are not allowed",
             parsed.host_str().unwrap_or("unknown")
@@ -270,4 +314,51 @@ pub async fn proxy_request_full(
         headers: resp_headers,
         body_b64,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_registry_permissions_match_exact_origins() {
+        let user = serde_json::json!({
+            "sidex.extensions.galleryUrl": "https://registry.example:8443/vscode/gallery",
+            "sidex.extensions.allowedGalleryOrigins": ["https://assets.example"]
+        });
+        for value in [
+            "https://registry.example:8443/extensionquery",
+            "https://assets.example/icon.png",
+        ] {
+            assert!(is_configured_gallery_allowed(
+                &value.parse().unwrap(),
+                &user
+            ));
+        }
+        for value in [
+            "https://registry.example/extensionquery",
+            "https://other.registry.example:8443/",
+            "http://assets.example/icon.png",
+            "https://assets.example.evil.invalid/",
+        ] {
+            assert!(!is_configured_gallery_allowed(
+                &value.parse().unwrap(),
+                &user
+            ));
+        }
+    }
+
+    #[test]
+    fn malformed_or_credential_bearing_registry_settings_grant_no_access() {
+        let url = reqwest::Url::parse("https://registry.example/").unwrap();
+        for value in [
+            "https://user@registry.example/",
+            "https://registry.example/?secret=1",
+            "ftp://registry.example/",
+            "not a url",
+        ] {
+            let user = serde_json::json!({ "sidex.extensions.galleryUrl": value });
+            assert!(!is_configured_gallery_allowed(&url, &user));
+        }
+    }
 }

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { createProductConfiguration } from '../../../../product-config.js';
 import { env } from '../../../base/common/process.js';
 import { IProductConfiguration } from '../../../base/common/product.js';
 import { ISandboxConfiguration } from '../../../base/parts/sandbox/common/sandboxTypes.js';
@@ -61,26 +62,7 @@ else {
 
 	// Running out of sources
 	if (Object.keys(product).length === 0) {
-		Object.assign(product, {
-			version: '1.110.0',
-			nameShort: 'SideX',
-			nameLong: 'SideX',
-			applicationName: 'sidex',
-			dataFolderName: '.sidex',
-			urlProtocol: 'sidex',
-			reportIssueUrl: 'https://github.com/Sidenai/sidex/issues/new',
-			licenseName: 'MIT',
-			licenseUrl: 'https://github.com/Sidenai/sidex/blob/main/LICENSE',
-			serverLicenseUrl: 'https://github.com/Sidenai/sidex/blob/main/LICENSE',
-			extensionsGallery: {
-				serviceUrl: 'https://marketplace.siden.ai/api/gallery',
-				controlUrl: 'https://az764295.vo.msecnd.net/extensions/marketplace.json',
-				extensionUrlTemplate:
-					'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/{publisher}/vsextensions/{name}/{version}/vspackage',
-				resourceUrlTemplate: 'https://{publisher}.vscode-unpkg.net/{publisher}/{name}/{version}/{path}',
-				nlsBaseUrl: 'https://az764295.vo.msecnd.net/extensions/{publisher}/{name}/{version}/{lang}.json'
-			}
-		});
+		Object.assign(product, createProductConfiguration());
 	}
 }
 

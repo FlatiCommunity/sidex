@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { loadNlsMessages } from './nls-loader.js';
+import { initializeProductConfiguration } from './product-config.js';
 
 async function sidexOpenFolder() {
 	try {
@@ -28,6 +29,7 @@ function navigateToFolder(folderUri: string) {
 }
 
 async function boot() {
+	await initializeProductConfiguration();
 	// Load locale translations before any VS Code module imports
 	await loadNlsMessages();
 

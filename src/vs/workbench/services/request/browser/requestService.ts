@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IRequestOptions, IRequestContext } from '../../../../base/parts/request/common/request.js';
+import { raceCancellationError } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { RequestChannelClient } from '../../../../platform/request/common/requestIpc.js';
@@ -43,8 +44,8 @@ export class BrowserRequestService extends AbstractRequestService implements IRe
 
 	async request(options: IRequestOptions, token: CancellationToken): Promise<IRequestContext> {
 		const url = options.url ?? '';
-		if (url.startsWith('https://') || url.startsWith('http://')) {
-			return this.logAndRequest(options, () => this._tauriProxyRequest(options));
+		if ((globalThis as any).__TAURI_INTERNALS__ && (url.startsWith('https://') || url.startsWith('http://'))) {
+			return this.logAndRequest(options, () => raceCancellationError(this._tauriProxyRequest(options), token));
 		}
 
 		try {
