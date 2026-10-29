@@ -618,10 +618,33 @@ pub fn remote_list(repo_root: &Path) -> GitResult<Vec<GitRemote>> {
 
 /// Show the HEAD version of a file as raw bytes.
 pub fn show_file(repo_root: &Path, file: &str) -> GitResult<Vec<u8>> {
-    let rev_file = format!("HEAD:{file}");
+    show_file_at(repo_root, file, "HEAD")
+}
+
+/// Read a blob from a revision or the index without converting its bytes.
+pub fn show_file_at(repo_root: &Path, file: &str, reference: &str) -> GitResult<Vec<u8>> {
+    if file.is_empty()
+        || file.contains('\0')
+        || Path::new(file).is_absolute()
+        || Path::new(file)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        || reference.is_empty()
+        || reference.starts_with('-')
+        || reference.contains(['\0', ':'])
+    {
+        return Err(GitError::Parse(
+            "invalid Git blob path or revision".to_owned(),
+        ));
+    }
+    let rev_file = if reference == "INDEX" {
+        format!(":{file}")
+    } else {
+        format!("{reference}:{file}")
+    };
     let output = git_command()
         .current_dir(repo_root)
-        .args(["show", &rev_file])
+        .args(["cat-file", "blob", &rev_file])
         .output()
         .map_err(GitError::Exec)?;
 
@@ -1038,6 +1061,48 @@ mod tests {
         let tmp = init_repo_with_commit();
         let content = show_file(tmp.path(), "init.txt").unwrap();
         assert_eq!(String::from_utf8(content).unwrap(), "init");
+    }
+
+    #[test]
+    fn worktree_blobs_preserve_bytes_and_keep_index_separate_from_head() {
+        let repo = init_repo_with_commit();
+        let worktree = tempfile::TempDir::new().unwrap();
+        run_git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                worktree.path().to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let name = "файл with spaces.txt";
+        let original = b"\xef\xbb\xbforiginal\r\n";
+        let staged = b"\xef\xbb\xbfchanged\r\n\x00\xff";
+        std::fs::write(worktree.path().join(name), original).unwrap();
+        run_git(worktree.path(), &["add", "--", name]).unwrap();
+        run_git(worktree.path(), &["commit", "-m", "add file"]).unwrap();
+        std::fs::write(worktree.path().join(name), staged).unwrap();
+        run_git(worktree.path(), &["add", "--", name]).unwrap();
+        std::fs::write(worktree.path().join(name), "unstaged").unwrap();
+        assert_eq!(
+            show_file_at(worktree.path(), name, "HEAD").unwrap(),
+            original
+        );
+        assert_eq!(
+            show_file_at(worktree.path(), name, "INDEX").unwrap(),
+            staged
+        );
+        assert!(show_file_at(worktree.path(), name, "missing-revision").is_err());
+    }
+
+    #[test]
+    fn blob_requests_reject_option_and_traversal_arguments() {
+        let repo = init_repo_with_commit();
+        assert!(show_file_at(repo.path(), "../secret", "HEAD").is_err());
+        assert!(show_file_at(repo.path(), "init.txt", "--help").is_err());
     }
 
     #[test]

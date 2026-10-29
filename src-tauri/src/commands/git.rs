@@ -11,6 +11,8 @@ use super::validation::validate_path;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitChange {
     pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_path: Option<String>,
     pub status: String,
     pub staged: bool,
 }
@@ -85,6 +87,7 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
         .into_iter()
         .map(|e| GitChange {
             path: e.path,
+            original_path: e.original_path,
             status: file_status_str(e.status).to_string(),
             staged: e.staged,
         })
@@ -329,10 +332,28 @@ pub async fn git_reset(path: String, files: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn git_show(path: String, file: String) -> Result<Vec<u8>, String> {
+pub async fn git_show(
+    path: String,
+    file: String,
+    reference: Option<String>,
+) -> Result<Vec<u8>, String> {
     validate_path(&path)?;
-    let repo = Path::new(&path);
-    sidex_git::show_file(repo, &file).map_err(git_err)
+    tokio::task::spawn_blocking(move || {
+        sidex_git::show_file_at(
+            Path::new(&path),
+            &file,
+            reference.as_deref().unwrap_or("HEAD"),
+        )
+        .map_err(git_err)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn git_repository_root(path: String) -> Result<Option<String>, String> {
+    validate_path(&path)?;
+    Ok(sidex_git::find_repo_root(Path::new(&path)).map(|root| root.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]

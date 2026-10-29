@@ -45,7 +45,7 @@ import { MenuId, MenuRegistry } from '../../../../platform/actions/common/action
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
-import { FileSystemProviderCapabilities, FileType, FilePermission } from '../../../../platform/files/common/files.js';
+import { FileSystemProviderCapabilities, FileType, FilePermission, createFileSystemProviderError, FileSystemProviderErrorCode } from '../../../../platform/files/common/files.js';
 import type {
 	IFileSystemProvider,
 	IStat,
@@ -65,11 +65,15 @@ import {
 } from '../../../services/decorations/common/decorations.js';
 import { registerColor } from '../../../../platform/theme/common/colorRegistry.js';
 import { historyItemRefColor, historyItemRemoteRefColor } from './scmHistory.js';
+import { GIT_ORIGINAL_SCHEME, gitOriginalUri, gitOriginalRequest } from './gitOriginalUri.js';
+import { localize } from '../../../../nls.js';
+import { isMacintosh } from '../../../../base/common/platform.js';
 
 // ─── Tauri invoke() bridge ──────────────────────────────────────────────────
 
 interface TauriGitChange {
 	path: string;
+	original_path?: string;
 	status: string;
 	staged: boolean;
 }
@@ -116,8 +120,6 @@ async function invokeGit<T>(cmd: string, args?: Record<string, unknown>): Promis
 
 // ─── Git Original File System Provider ──────────────────────────────────────
 
-const GIT_ORIGINAL_SCHEME = 'git-original';
-
 class TauriGitOriginalFileProvider implements IFileSystemProvider {
 	readonly capabilities = FileSystemProviderCapabilities.FileReadWrite | FileSystemProviderCapabilities.Readonly;
 
@@ -133,8 +135,9 @@ class TauriGitOriginalFileProvider implements IFileSystemProvider {
 		return Disposable.None;
 	}
 
-	async stat(_resource: URI): Promise<IStat> {
-		return { type: FileType.File, ctime: 0, mtime: 0, size: 0, permissions: FilePermission.Readonly };
+	async stat(resource: URI): Promise<IStat> {
+		const bytes = await this.readFile(resource);
+		return { type: FileType.File, ctime: 0, mtime: 0, size: bytes.byteLength, permissions: FilePermission.Readonly };
 	}
 
 	async mkdir(_resource: URI): Promise<void> {
@@ -154,26 +157,14 @@ class TauriGitOriginalFileProvider implements IFileSystemProvider {
 	}
 
 	async readFile(resource: URI): Promise<Uint8Array> {
-		const filePath = resource.path.startsWith('/') ? resource.path.slice(1) : resource.path;
-		const gitRef = resource.query || 'HEAD';
+		const request = gitOriginalRequest(resource, URI.file(this._workspaceRoot));
+		if (request.reference === 'EMPTY') return new Uint8Array();
 		const invoke = await getTauriInvoke();
-		if (!invoke) {
-			return new Uint8Array();
-		}
+		if (!invoke) throw createFileSystemProviderError('Git backend unavailable', FileSystemProviderErrorCode.Unavailable);
 		try {
-			const revFile = `${gitRef}:${filePath}`;
-			const output = (await invoke('git_run', {
-				path: this._workspaceRoot,
-				args: ['show', revFile]
-			})) as string;
-			return new TextEncoder().encode(output);
-		} catch {
-			try {
-				const bytes = (await invoke('git_show', { path: this._workspaceRoot, file: filePath })) as number[];
-				return new Uint8Array(bytes);
-			} catch {
-				return new Uint8Array();
-			}
+			return new Uint8Array(await invoke('git_show', request) as number[]);
+		} catch (error) {
+			throw createFileSystemProviderError(String(error), FileSystemProviderErrorCode.FileNotFound);
 		}
 	}
 
@@ -196,27 +187,24 @@ class TauriGitResource implements ISCMResource {
 		readonly sourceUri: URI,
 		private readonly _status: string,
 		private readonly _staged: boolean,
-		private readonly _workspaceRootUri: URI
+		private readonly _workspaceRootUri: URI,
+		private readonly _originalPath?: string
 	) {
 		this.decorations = TauriGitResource._decorationForStatus(_status);
 		this.contextValue = _staged ? 'staged' : 'unstaged';
 
-		const relPath = relativePath(_workspaceRootUri, sourceUri) ?? sourceUri.path;
-
-		if (_status === 'untracked' || _status === 'added') {
-			this.command = { id: 'git.openFile', title: 'Open File' };
+		if (_status === 'untracked') {
+			this.command = { id: 'git.openFile', title: localize('git.openFile', 'Open File') };
 			this.multiDiffEditorOriginalUri = undefined;
 			this.multiDiffEditorModifiedUri = sourceUri;
-		} else if (_status === 'deleted') {
-			const originalUri = URI.from({ scheme: GIT_ORIGINAL_SCHEME, path: `/${relPath}` });
-			this.command = { id: 'git.openDiff', title: 'Open Changes' };
-			this.multiDiffEditorOriginalUri = originalUri;
-			this.multiDiffEditorModifiedUri = undefined;
 		} else {
-			const originalUri = URI.from({ scheme: GIT_ORIGINAL_SCHEME, path: `/${relPath}` });
-			this.command = { id: 'git.openDiff', title: 'Open Changes' };
-			this.multiDiffEditorOriginalUri = originalUri;
-			this.multiDiffEditorModifiedUri = sourceUri;
+			const originalFile = _originalPath ? URI.joinPath(_workspaceRootUri, _originalPath) : sourceUri;
+			const reference = _status === 'added' ? 'EMPTY' : (_staged ? 'HEAD' : 'INDEX');
+			this.command = { id: 'git.openDiff', title: localize('git.openChanges', 'Open Changes') };
+			this.multiDiffEditorOriginalUri = gitOriginalUri(originalFile, _workspaceRootUri, reference);
+			this.multiDiffEditorModifiedUri = _status === 'deleted'
+				? gitOriginalUri(sourceUri, _workspaceRootUri, 'EMPTY')
+				: _staged ? gitOriginalUri(sourceUri, _workspaceRootUri, 'INDEX') : sourceUri;
 		}
 	}
 
@@ -429,7 +417,8 @@ class TauriGitHistoryProvider implements ISCMHistoryProvider {
 				);
 			}
 		} catch {
-			// No upstream configured
+			this._historyItemRemoteRef.set(undefined, undefined);
+			this._historyItemBaseRef.set(undefined, undefined);
 		}
 	}
 
@@ -598,8 +587,8 @@ class TauriGitHistoryProvider implements ISCMHistoryProvider {
 					const fileUri = URI.joinPath(this._rootUri, filePath.trim());
 					return {
 						uri: fileUri,
-						originalUri: fileUri.with({ scheme: GIT_ORIGINAL_SCHEME, query: parentRef }),
-						modifiedUri: fileUri.with({ scheme: GIT_ORIGINAL_SCHEME, query: historyItemId })
+						originalUri: gitOriginalUri(fileUri, this._rootUri, parentRef),
+						modifiedUri: gitOriginalUri(fileUri, this._rootUri, historyItemId)
 					} satisfies ISCMHistoryItemChange;
 				});
 		} catch (err) {
@@ -791,7 +780,7 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 		if (!relPath) {
 			return null;
 		}
-		return URI.from({ scheme: GIT_ORIGINAL_SCHEME, path: `/${relPath}` });
+		return gitOriginalUri(uri, this.rootUri, 'INDEX');
 	}
 
 	async refresh(): Promise<void> {
@@ -831,11 +820,11 @@ class TauriGitSCMProvider extends Disposable implements ISCMProvider {
 		for (const change of status.changes) {
 			const fileUri = URI.joinPath(this.rootUri, change.path);
 			if (isConflictStatus(change.status)) {
-				mergeResources.push(new TauriGitResource(this._mergeGroup, fileUri, change.status, false, this.rootUri));
+				mergeResources.push(new TauriGitResource(this._mergeGroup, fileUri, change.status, false, this.rootUri, change.original_path));
 			} else if (change.staged) {
-				stagedResources.push(new TauriGitResource(this._stagedGroup, fileUri, change.status, true, this.rootUri));
+				stagedResources.push(new TauriGitResource(this._stagedGroup, fileUri, change.status, true, this.rootUri, change.original_path));
 			} else {
-				changesResources.push(new TauriGitResource(this._changesGroup, fileUri, change.status, false, this.rootUri));
+				changesResources.push(new TauriGitResource(this._changesGroup, fileUri, change.status, false, this.rootUri, change.original_path));
 			}
 		}
 
@@ -1105,8 +1094,18 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 			return;
 		}
 
-		const rootUri = folders[0].uri;
-		const rootPath = rootUri.fsPath;
+		const folderUri = folders[0].uri;
+		if (folderUri.scheme !== Schemas.file) return;
+		let rootPath: string;
+		try {
+			const discovered = await invokeGit<string | null>('git_repository_root', { path: folderUri.fsPath });
+			if (!discovered) return;
+			rootPath = discovered;
+		} catch (error) {
+			this.logService.warn('[TauriGit] Could not resolve repository root', error);
+			return;
+		}
+		const rootUri = URI.file(rootPath);
 		const originalProvider = new TauriGitOriginalFileProvider(rootPath);
 		try {
 			this._register(this.fileService.registerProvider(GIT_ORIGINAL_SCHEME, originalProvider));
@@ -1137,7 +1136,7 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 		this._register(provider);
 
 		// Set the commit message placeholder
-		repository.input.placeholder = `Message (⌘Enter to commit on "${provider.name}")`;
+		repository.input.placeholder = localize('git.commitMessage', 'Message ({0}Enter to commit on "{1}")', isMacintosh ? '⌘' : 'Ctrl+', provider.name);
 
 		this._registerDiffCommands(provider, rootPath);
 		this._registerCommitCommand(provider, rootPath);
@@ -1195,8 +1194,8 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 					}
 
 					const relPath = relativePath(provider.rootUri, sourceUri) ?? sourceUri.path;
-					const originalUri = URI.from({ scheme: GIT_ORIGINAL_SCHEME, path: `/${relPath}` });
-					const modifiedUri = sourceUri;
+					const originalUri = resource?.multiDiffEditorOriginalUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'INDEX');
+					const modifiedUri = resource?.multiDiffEditorModifiedUri ?? sourceUri;
 					const fileName = basename(sourceUri);
 					const title = `${fileName} (Working Tree)`;
 
@@ -1222,8 +1221,8 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 					}
 
 					const relPath = relativePath(provider.rootUri, sourceUri) ?? sourceUri.path;
-					const originalUri = URI.from({ scheme: GIT_ORIGINAL_SCHEME, path: `/${relPath}` });
-					const modifiedUri = sourceUri;
+					const originalUri = resource?.multiDiffEditorOriginalUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'HEAD');
+					const modifiedUri = resource?.multiDiffEditorModifiedUri ?? gitOriginalUri(sourceUri, provider.rootUri, 'INDEX');
 					const fileName = basename(sourceUri);
 					const title = `${fileName} (Index)`;
 
@@ -1308,7 +1307,7 @@ class TauriGitContribution extends Disposable implements IWorkbenchContribution 
 							await commandService.executeCommand('vscode.open', fileUri);
 						} else {
 							const relPath = change.path;
-							const originalUri = URI.from({ scheme: GIT_ORIGINAL_SCHEME, path: `/${relPath}` });
+							const originalUri = gitOriginalUri(fileUri, provider.rootUri, change.staged ? 'HEAD' : 'INDEX');
 							const fileName = basename(fileUri);
 							await commandService.executeCommand('vscode.diff', originalUri, fileUri, `${fileName} (Working Tree)`);
 						}

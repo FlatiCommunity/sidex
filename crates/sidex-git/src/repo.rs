@@ -34,7 +34,8 @@ pub fn is_git_repo(path: &Path) -> bool {
 
 /// The name of the current branch (e.g. `"main"`).
 pub fn current_branch(repo_root: &Path) -> GitResult<String> {
-    let output = run_git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let output = run_git(repo_root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .or_else(|_| run_git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"]))?;
     Ok(output.trim().to_string())
 }
 

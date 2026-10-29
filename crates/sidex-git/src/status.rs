@@ -24,126 +24,75 @@ pub enum FileStatus {
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusEntry {
     pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_path: Option<String>,
     pub status: FileStatus,
     pub staged: bool,
 }
 
-/// Run `git status --porcelain=v2` and parse the output.
+/// NUL-delimited porcelain preserves spaces, quotes, Unicode and newlines in names.
 pub fn get_status(repo_root: &Path) -> GitResult<Vec<StatusEntry>> {
-    let output = run_git(repo_root, &["status", "--porcelain=v2", "-uall"])?;
-    let mut entries = Vec::new();
+    let output = run_git(repo_root, &["status", "--porcelain=v2", "-z", "-uall"])?;
+    Ok(parse_status(&output))
+}
 
-    for line in output.lines() {
-        if line.is_empty() {
+fn parse_status(output: &str) -> Vec<StatusEntry> {
+    let mut entries = Vec::new();
+    let mut records = output.split('\0');
+    while let Some(record) = records.next() {
+        let kind = record.as_bytes().first();
+        if matches!(kind, Some(b'?') | Some(b'!')) {
+            entries.push(StatusEntry {
+                path: record.get(2..).unwrap_or_default().to_owned(),
+                original_path: None,
+                status: if kind == Some(&b'?') {
+                    FileStatus::Untracked
+                } else {
+                    FileStatus::Ignored
+                },
+                staged: false,
+            });
             continue;
         }
-
-        match line.as_bytes().first() {
-            // Ordinary changed entries: "1 XY ..."
-            Some(b'1') => {
-                if let Some(entry) = parse_ordinary_entry(line) {
-                    entries.push(entry);
-                }
+        let fields = match kind {
+            Some(b'1') => 9,
+            Some(b'2') => 10,
+            Some(b'u') => 11,
+            _ => continue,
+        };
+        let parts: Vec<_> = record.splitn(fields, ' ').collect();
+        if parts.len() != fields {
+            continue;
+        }
+        let path = parts[fields - 1];
+        let original = if kind == Some(&b'2') {
+            records.next().map(str::to_owned)
+        } else {
+            None
+        };
+        if kind == Some(&b'u') {
+            entries.push(StatusEntry {
+                path: path.to_owned(),
+                original_path: original,
+                status: FileStatus::Conflicted,
+                staged: false,
+            });
+            continue;
+        }
+        // A partially staged file belongs to both groups, with separate baselines.
+        for (index, status) in parts[1].bytes().take(2).enumerate() {
+            if status == b'.' {
+                continue;
             }
-            // Renamed/copied entries: "2 XY ..."
-            Some(b'2') => {
-                if let Some(entry) = parse_rename_entry(line) {
-                    entries.push(entry);
-                }
-            }
-            // Unmerged entries: "u XY ..."
-            Some(b'u') => {
-                if let Some(entry) = parse_unmerged_entry(line) {
-                    entries.push(entry);
-                }
-            }
-            // Untracked: "? path"
-            Some(b'?') => {
-                let path = line.get(2..).unwrap_or("").to_string();
-                entries.push(StatusEntry {
-                    path,
-                    status: FileStatus::Untracked,
-                    staged: false,
-                });
-            }
-            // Ignored: "! path"
-            Some(b'!') => {
-                let path = line.get(2..).unwrap_or("").to_string();
-                entries.push(StatusEntry {
-                    path,
-                    status: FileStatus::Ignored,
-                    staged: false,
-                });
-            }
-            _ => {}
+            entries.push(StatusEntry {
+                path: path.to_owned(),
+                original_path: if index == 0 { original.clone() } else { None },
+                status: char_to_status(status),
+                staged: index == 0,
+            });
         }
     }
-
-    Ok(entries)
-}
-
-/// Parse a "1 XY sub mH mI mW hH hI path" line.
-fn parse_ordinary_entry(line: &str) -> Option<StatusEntry> {
-    let parts: Vec<&str> = line.splitn(9, ' ').collect();
-    if parts.len() < 9 {
-        return None;
-    }
-    let xy = parts[1];
-    let path = parts[8].to_string();
-
-    let x = xy.as_bytes().first().copied().unwrap_or(b'.');
-    let y = xy.as_bytes().get(1).copied().unwrap_or(b'.');
-
-    let (status, staged) = if x == b'.' {
-        (char_to_status(y), false)
-    } else {
-        (char_to_status(x), true)
-    };
-
-    Some(StatusEntry {
-        path,
-        status,
-        staged,
-    })
-}
-
-/// Parse a "2 XY sub mH mI mW hH hI X### origPath\tpath" line.
-fn parse_rename_entry(line: &str) -> Option<StatusEntry> {
-    let parts: Vec<&str> = line.splitn(10, ' ').collect();
-    if parts.len() < 10 {
-        return None;
-    }
-    let xy = parts[1];
-    let paths_part = parts[9];
-
-    let path = paths_part
-        .split('\t')
-        .next_back()
-        .unwrap_or(paths_part)
-        .to_string();
-
-    let x = xy.as_bytes().first().copied().unwrap_or(b'.');
-    let staged = x != b'.';
-
-    Some(StatusEntry {
-        path,
-        status: FileStatus::Renamed,
-        staged,
-    })
-}
-
-/// Parse a "u XY sub m1 m2 m3 hH path" line.
-fn parse_unmerged_entry(line: &str) -> Option<StatusEntry> {
-    let parts: Vec<&str> = line.splitn(8, ' ').collect();
-    if parts.len() < 8 {
-        return None;
-    }
-    let path = parts[7].to_string();
-    Some(StatusEntry {
-        path,
-        status: FileStatus::Conflicted,
-        staged: false,
-    })
+    entries
 }
 
 fn char_to_status(c: u8) -> FileStatus {
@@ -180,6 +129,29 @@ mod tests {
             .output()
             .unwrap();
         tmp
+    }
+
+    #[test]
+    fn nul_records_preserve_names_and_partial_staging() {
+        let records =
+            "1 MM N... 100644 100644 100644 abc abc файл with\nline.txt\0? new\tfile.txt\0";
+        let entries = parse_status(records);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].path, "файл with\nline.txt");
+        assert!(entries[0].staged);
+        assert!(!entries[1].staged);
+        assert_eq!(entries[2].path, "new\tfile.txt");
+    }
+
+    #[test]
+    fn rename_records_preserve_old_and_new_path() {
+        let entries = parse_status(
+            "2 RM N... 100644 100644 100644 abc abc R100 new name.txt\0old name.txt\0",
+        );
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "new name.txt");
+        assert_eq!(entries[0].original_path.as_deref(), Some("old name.txt"));
+        assert!(entries[1].original_path.is_none());
     }
 
     #[test]
