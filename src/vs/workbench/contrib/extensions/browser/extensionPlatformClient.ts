@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getNLSLanguage } from '../../../../nls.js';
 
 // ---------------------------------------------------------------------------
 // Platform bootstrap / lifecycle
@@ -56,7 +57,7 @@ export interface IExtensionPlatformStatus {
 }
 
 export async function bootstrapExtensionPlatform(): Promise<IExtensionPlatformBootstrap> {
-  return invoke<IExtensionPlatformBootstrap>('extension_platform_bootstrap');
+  return invoke<IExtensionPlatformBootstrap>('extension_platform_bootstrap', { locale: getNLSLanguage() ?? 'en' });
 }
 
 export async function getExtensionPlatformStatus(): Promise<IExtensionPlatformStatus> {
@@ -64,7 +65,7 @@ export async function getExtensionPlatformStatus(): Promise<IExtensionPlatformSt
 }
 
 export async function restartExtensionPlatform(): Promise<IExtensionPlatformStatus> {
-  return invoke<IExtensionPlatformStatus>('extension_platform_restart');
+  return invoke<IExtensionPlatformStatus>('extension_platform_restart', { locale: getNLSLanguage() ?? 'en' });
 }
 
 export async function stopExtensionPlatform(): Promise<void> {
@@ -72,7 +73,7 @@ export async function stopExtensionPlatform(): Promise<void> {
 }
 
 export async function getExtensionPlatformInitData(): Promise<string> {
-  return invoke<string>('extension_platform_init_data');
+  return invoke<string>('extension_platform_init_data', { locale: getNLSLanguage() ?? 'en' });
 }
 
 // ---------------------------------------------------------------------------

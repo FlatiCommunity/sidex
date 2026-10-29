@@ -656,7 +656,7 @@ pub fn build_init_data(
     let data_dir = user_data_dir();
 
     ExtensionHostInitData {
-        version: "1.93.0".to_string(),
+        version: "1.110.0".to_string(),
         commit: None,
         parent_pid: std::process::id(),
         environment: InitDataEnvironment {
@@ -732,6 +732,7 @@ pub async fn list_available_extensions(app: AppHandle) -> Result<Vec<ExtensionMa
 #[tauri::command]
 pub async fn extension_platform_bootstrap(
     app: AppHandle,
+    locale: Option<String>,
     supervisor: tauri::State<'_, crate::commands::ext_host::ExtensionPlatformSupervisor>,
     wasm_runtime: tauri::State<
         '_,
@@ -741,7 +742,8 @@ pub async fn extension_platform_bootstrap(
     let paths = extension_search_paths(&app);
     let manifests = scan_extensions(&app, &paths);
     let descriptions = build_extension_descriptions(&manifests);
-    let init_data = build_init_data(&descriptions, &[]);
+    let mut init_data = build_init_data(&descriptions, &[]);
+    init_data.environment.app_language = requested_app_language(locale.as_deref());
     let init_data_json = serde_json::to_string(&init_data).map_err(|e| e.to_string())?;
     let search_paths: Vec<String> = paths
         .iter()
@@ -831,12 +833,14 @@ pub async fn extension_platform_status(
 #[tauri::command]
 pub async fn extension_platform_restart(
     app: AppHandle,
+    locale: Option<String>,
     supervisor: tauri::State<'_, crate::commands::ext_host::ExtensionPlatformSupervisor>,
 ) -> Result<serde_json::Value, String> {
     let paths = extension_search_paths(&app);
     let manifests = scan_extensions(&app, &paths);
     let descriptions = build_extension_descriptions(&manifests);
-    let init_data = build_init_data(&descriptions, &[]);
+    let mut init_data = build_init_data(&descriptions, &[]);
+    init_data.environment.app_language = requested_app_language(locale.as_deref());
     let init_data_json = serde_json::to_string(&init_data).map_err(|e| e.to_string())?;
     let search_paths: Vec<String> = paths
         .iter()
@@ -854,10 +858,36 @@ pub async fn extension_platform_stop(
 }
 
 #[tauri::command]
-pub async fn extension_platform_init_data(app: AppHandle) -> Result<String, String> {
+pub async fn extension_platform_init_data(app: AppHandle, locale: Option<String>) -> Result<String, String> {
     let paths = extension_search_paths(&app);
     let manifests = scan_extensions(&app, &paths);
     let descriptions = build_extension_descriptions(&manifests);
-    let init_data = build_init_data(&descriptions, &[]);
+    let mut init_data = build_init_data(&descriptions, &[]);
+    init_data.environment.app_language = requested_app_language(locale.as_deref());
     serde_json::to_string(&init_data).map_err(|e| e.to_string())
+}
+
+/// Only a language tag is accepted here; the renderer does not choose files or NLS environment JSON.
+fn requested_app_language(locale: Option<&str>) -> String {
+    locale
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 35
+                && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        })
+        .map_or_else(|| "en".to_string(), |value| value.replace('_', "-").to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::requested_app_language;
+
+    #[test]
+    fn accepts_language_tags_and_rejects_path_like_values() {
+        assert_eq!(requested_app_language(Some("RU_ru")), "ru-ru");
+        assert_eq!(requested_app_language(Some("zh-CN")), "zh-cn");
+        assert_eq!(requested_app_language(None), "en");
+        assert_eq!(requested_app_language(Some("../../pack")), "en");
+        assert_eq!(requested_app_language(Some("")), "en");
+    }
 }
