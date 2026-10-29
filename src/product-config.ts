@@ -29,6 +29,8 @@ export function createProductConfiguration(galleryUrl: unknown = DEFAULT_GALLERY
 		commit: '',
 		quality: 'stable',
 		reportIssueUrl: 'https://github.com/naulbi-dump-projects/sidex/issues/new',
+		documentationUrl: 'https://github.com/naulbi-dump-projects/sidex/blob/main/README.md',
+		serverDocumentationUrl: 'https://github.com/naulbi-dump-projects/sidex/blob/main/README.md',
 		licenseName: 'MIT',
 		licenseUrl: 'https://github.com/naulbi-dump-projects/sidex/blob/main/LICENSE',
 		serverLicenseUrl: 'https://github.com/naulbi-dump-projects/sidex/blob/main/LICENSE',

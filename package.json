@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/generate-extension-meta.js",
-    "server:build": "cd sidexai/sidex-server && go build -tags fts5 -o sidex-server ./cmd/server",
+    "server:build": "node scripts/build-server.mjs",
     "setup:full": "node scripts/generate-extension-meta.js",
     "dev": "npm run setup && node --max-old-space-size=6144 node_modules/vite/bin/vite.js",
     "build": "node scripts/build.mjs",
@@ -21,7 +21,7 @@
     "rust:fmt:fix": "cd src-tauri && cargo fmt --all",
     "assets:sync": "node scripts/sync-builtin-extensions.mjs",
     "typecheck": "node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit",
-    "test": "node --test --test-concurrency=2 scripts/tests/*.test.mjs",
+    "test": "node --test --test-isolation=none --test-concurrency=1 scripts/tests/*.test.mjs",
     "test:browser": "node scripts/browser/run.mjs",
     "validate:localization": "node scripts/validate-localization.mjs",
     "check": "npm run typecheck && npm test && npm run validate:localization",
