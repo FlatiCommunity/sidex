@@ -170,6 +170,7 @@ fn rewrite_proxy_vsix_platform(url: &str, new_platform: &str) -> String {
         return url.to_owned();
     };
     if old_platform.is_empty()
+        || old_platform == "universal"
         || old_platform == new_platform
         || upstream_segments
             .get(platform_index)
@@ -186,6 +187,34 @@ fn rewrite_proxy_vsix_platform(url: &str, new_platform: &str) -> String {
         format!("vsix-{}", URL_SAFE_NO_PAD.encode(upstream_url.as_str()));
     proxy_url.set_path(&format!("/{}", proxy_segments.join("/")));
     proxy_url.into()
+}
+
+#[tauri::command]
+pub fn extension_get_target_platform() -> &'static str {
+    current_target_platform()
+}
+
+#[tauri::command]
+pub async fn read_vsix_manifest(vsix_path: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let pkg = unpack_vsix(Path::new(&vsix_path)).map_err(|e| format!("unpack vsix: {e:#}"))?;
+        let validation = validate_vsix(&pkg);
+        if !validation.valid {
+            return Err(format!(
+                "vsix validation failed: {}",
+                validation.errors.join("; ")
+            ));
+        }
+        let bytes = pkg
+            .contents
+            .get("package.json")
+            .ok_or("missing extension/package.json")?;
+        let text =
+            sidex_extensions::encoding::decode_manifest_text(bytes).map_err(|e| e.to_string())?;
+        serde_json::from_str(&text).map_err(|e| format!("invalid extension manifest: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -206,23 +235,56 @@ pub async fn install_extension(vsix_path: String) -> Result<InstalledExtension, 
 }
 
 #[tauri::command]
-pub async fn install_extension_from_url(url: String) -> Result<InstalledExtension, String> {
+pub async fn install_extension_from_url(
+    url: String,
+    expected_id: Option<String>,
+) -> Result<InstalledExtension, String> {
     let url = rewrite_proxy_vsix_platform(&url, current_target_platform());
     let url = ensure_target_platform(&url);
     log::info!("downloading extension from {url}");
-    let resp = reqwest::get(&url)
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("download client: {e}"))?;
+    let mut resp = client
+        .get(&url)
+        .send()
         .await
         .map_err(|e| format!("download: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("download failed: HTTP {}", resp.status()));
     }
-    let bytes = resp.bytes().await.map_err(|e| format!("read body: {e}"))?;
+    const MAX_DOWNLOAD_BYTES: usize = 512 * 1024 * 1024;
+    if resp
+        .content_length()
+        .is_some_and(|size| size > MAX_DOWNLOAD_BYTES as u64)
+    {
+        return Err("VSIX download exceeds 512 MiB".into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("read body: {e}"))? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_DOWNLOAD_BYTES {
+            return Err("VSIX download exceeds 512 MiB".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
 
     let tmp_path = std::env::temp_dir().join(format!("sidex-{}.vsix", uuid::Uuid::new_v4()));
     fs::write(&tmp_path, &bytes).map_err(|e| format!("write tempfile: {e}"))?;
 
     let result = (|| -> Result<InstalledExtension, String> {
         let pkg = unpack_vsix(&tmp_path).map_err(|e| format!("unpack vsix: {e:#}"))?;
+        if expected_id
+            .as_ref()
+            .is_some_and(|expected| !pkg.manifest.canonical_id().eq_ignore_ascii_case(expected))
+        {
+            return Err(format!(
+                "downloaded extension {} does not match requested {}",
+                pkg.manifest.canonical_id(),
+                expected_id.as_deref().unwrap_or_default()
+            ));
+        }
         let validation = validate_vsix(&pkg);
         if !validation.valid {
             return Err(format!(
@@ -251,7 +313,7 @@ pub async fn uninstall_extension(extension_id: String) -> Result<(), String> {
     let target_dir = user_extensions_dir();
     let ext_dir = target_dir.join(&safe_id);
     if !ext_dir.exists() {
-        return Err(format!("not installed: {extension_id}"));
+        return Ok(());
     }
     crate_uninstall(&safe_id, &target_dir).map_err(|e| format!("remove: {e:#}"))?;
     log::info!("uninstalled {extension_id}");

@@ -22,7 +22,12 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::encoding::decode_manifest_text;
-use crate::manifest::{parse_manifest_str, ExtensionManifest};
+use crate::manifest::{parse_manifest_str, sanitize_ext_id, ExtensionManifest};
+use crate::marketplace::current_target_platform;
+
+const MAX_ARCHIVE_ENTRIES: usize = 100_000;
+const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_PACKAGE_BYTES: u64 = 1024 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,18 +82,51 @@ pub fn unpack_vsix(vsix_path: &Path) -> Result<VsixPackage> {
     let mut icon: Option<Vec<u8>> = None;
     let mut contents: HashMap<String, Vec<u8>> = HashMap::new();
     let mut modes: HashMap<String, u32> = HashMap::new();
+    anyhow::ensure!(
+        archive.len() <= MAX_ARCHIVE_ENTRIES,
+        "VSIX has too many entries"
+    );
+    let mut total_bytes = 0_u64;
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let Some(name) = entry.enclosed_name() else {
-            continue;
-        };
+        let name = entry
+            .enclosed_name()
+            .context("VSIX contains an unsafe entry path")?;
         let name_str = name.to_string_lossy().to_string();
+        anyhow::ensure!(
+            !name_str.contains('\\'),
+            "VSIX entry uses an unsafe path separator"
+        );
+        anyhow::ensure!(
+            entry
+                .unix_mode()
+                .is_none_or(|mode| mode & 0o170_000 != 0o120_000),
+            "VSIX symlinks are not supported"
+        );
+        anyhow::ensure!(
+            entry.size() <= MAX_FILE_BYTES,
+            "VSIX file exceeds the size limit"
+        );
+        total_bytes = total_bytes
+            .checked_add(entry.size())
+            .context("VSIX size overflow")?;
+        anyhow::ensure!(
+            total_bytes <= MAX_PACKAGE_BYTES,
+            "VSIX exceeds the unpacked size limit"
+        );
 
         if name_str == "extension.vsixmanifest" {
-            let mut buf = String::new();
-            entry.read_to_string(&mut buf)?;
-            vsix_manifest_xml = Some(buf);
+            let mut buf = Vec::new();
+            entry
+                .by_ref()
+                .take(MAX_FILE_BYTES + 1)
+                .read_to_end(&mut buf)?;
+            anyhow::ensure!(
+                buf.len() as u64 <= MAX_FILE_BYTES,
+                "VSIX manifest exceeds the size limit"
+            );
+            vsix_manifest_xml = Some(decode_manifest_text(&buf)?);
             continue;
         }
 
@@ -99,9 +137,21 @@ pub fn unpack_vsix(vsix_path: &Path) -> Result<VsixPackage> {
             continue;
         }
 
+        validate_relative_path(rel)?;
+        anyhow::ensure!(
+            !contents.contains_key(rel),
+            "VSIX contains duplicate file {rel}"
+        );
         let unix_mode = entry.unix_mode();
         let mut buf = Vec::new();
-        entry.read_to_end(&mut buf)?;
+        entry
+            .by_ref()
+            .take(MAX_FILE_BYTES + 1)
+            .read_to_end(&mut buf)?;
+        anyhow::ensure!(
+            buf.len() as u64 <= MAX_FILE_BYTES,
+            "VSIX file exceeds the size limit"
+        );
 
         let rel_lower = rel.to_lowercase();
         match rel_lower.as_str() {
@@ -171,6 +221,31 @@ pub fn validate_vsix(pkg: &VsixPackage) -> ValidationResult {
         errors.push("manifest is missing 'version'".to_string());
     }
 
+    if let Err(error) = sanitize_ext_id(&pkg.manifest.canonical_id()) {
+        errors.push(error.to_string());
+    }
+    let derived_id = pkg.manifest.publisher.as_ref().map_or_else(
+        || pkg.manifest.name.clone(),
+        |publisher| format!("{publisher}.{}", pkg.manifest.name),
+    );
+    if !pkg
+        .manifest
+        .canonical_id()
+        .eq_ignore_ascii_case(&derived_id)
+    {
+        errors.push("manifest id disagrees with publisher and name".to_string());
+    }
+    if let Err(error) =
+        validate_target_platform(pkg.vsix_manifest_xml.as_deref(), current_target_platform())
+    {
+        errors.push(error.to_string());
+    }
+    for path in pkg.contents.keys() {
+        if let Err(error) = validate_relative_path(path) {
+            errors.push(error.to_string());
+        }
+    }
+
     if pkg.manifest.publisher.is_none() {
         warnings.push("manifest has no 'publisher' field".to_string());
     }
@@ -216,21 +291,30 @@ pub fn validate_vsix_file(vsix_path: &Path) -> Result<ValidationResult> {
 
 /// Installs a VSIX package (already unpacked) to an extensions directory.
 pub fn install_package(pkg: &VsixPackage, extensions_dir: &Path) -> Result<InstalledExtension> {
-    let ext_id = pkg.manifest.canonical_id();
+    let validation = validate_vsix(pkg);
+    anyhow::ensure!(
+        validation.valid,
+        "VSIX validation failed: {}",
+        validation.errors.join("; ")
+    );
+    let ext_id = sanitize_ext_id(&pkg.manifest.canonical_id())?;
+    std::fs::create_dir_all(extensions_dir)?;
     let ext_dir = extensions_dir.join(&ext_id);
+    anyhow::ensure!(
+        !std::fs::symlink_metadata(&ext_dir)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink()),
+        "extension directory must not be a symlink"
+    );
 
-    if ext_dir.exists() {
-        std::fs::remove_dir_all(&ext_dir).with_context(|| {
-            format!(
-                "failed to remove existing extension dir: {}",
-                ext_dir.display()
-            )
-        })?;
-    }
-    std::fs::create_dir_all(&ext_dir)?;
-
+    // Stage on the same filesystem: a failed extraction must keep the old
+    // installation intact, and committing is a rename, not a partial copy.
+    let staging = tempfile::Builder::new()
+        .prefix(".sidex-install-")
+        .tempdir_in(extensions_dir)?;
+    let payload = staging.path().join("extension");
+    std::fs::create_dir(&payload)?;
     for (rel_path, data) in &pkg.contents {
-        let out_path = ext_dir.join(rel_path);
+        let out_path = payload.join(rel_path);
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -238,10 +322,105 @@ pub fn install_package(pkg: &VsixPackage, extensions_dir: &Path) -> Result<Insta
         apply_file_mode(&out_path, pkg.modes.get(rel_path).copied(), rel_path);
     }
 
+    // Older hosts kept state inside the installation directory. Keep that
+    // state across updates until the host migrates it to user data on activation.
+    // Copy before changing the old installation so any I/O error is harmless.
+    for legacy in [".storage", ".global-storage"] {
+        let source = ext_dir.join(legacy);
+        if std::fs::symlink_metadata(&source).is_ok() {
+            let destination = payload.join(legacy);
+            anyhow::ensure!(
+                !destination.exists(),
+                "VSIX conflicts with legacy extension state: {legacy}"
+            );
+            copy_legacy_storage(&source, &destination)?;
+        }
+    }
+
+    let previous = staging.path().join("previous");
+    let had_previous = ext_dir.exists();
+    if had_previous {
+        std::fs::rename(&ext_dir, &previous).context("failed to prepare extension update")?;
+    }
+    if let Err(error) = std::fs::rename(&payload, &ext_dir) {
+        if had_previous {
+            if let Err(rollback) = std::fs::rename(&previous, &ext_dir) {
+                // Keep the backup recoverable if the OS also refuses rollback.
+                let backup = staging.keep();
+                anyhow::bail!("install failed: {error}; restore failed: {rollback}; previous installation is in {}", backup.join("previous").display());
+            }
+        }
+        return Err(error).context("failed to commit extension installation");
+    }
+
     Ok(InstalledExtension {
         manifest: pkg.manifest.clone(),
         install_dir: ext_dir,
     })
+}
+
+fn copy_legacy_storage(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(source)?;
+    if metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(source)?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, destination)?;
+        #[cfg(windows)]
+        if source.is_dir() {
+            std::os::windows::fs::symlink_dir(target, destination)?;
+        } else {
+            std::os::windows::fs::symlink_file(target, destination)?;
+        }
+    } else if metadata.is_dir() {
+        std::fs::create_dir(destination)?;
+        for entry in std::fs::read_dir(source)? {
+            let entry = entry?;
+            copy_legacy_storage(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+        std::fs::set_permissions(destination, metadata.permissions())?;
+    } else {
+        std::fs::copy(source, destination)?;
+    }
+    Ok(())
+}
+
+fn validate_relative_path(path: &str) -> Result<()> {
+    anyhow::ensure!(
+        !path.is_empty()
+            && !path.contains(['\\', ':', '\0'])
+            && Path::new(path)
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+        "unsafe VSIX file path: {path}"
+    );
+    Ok(())
+}
+
+fn validate_target_platform(manifest: Option<&str>, expected: &str) -> Result<()> {
+    let Some(manifest) = manifest else {
+        return Ok(());
+    };
+    let mut reader = quick_xml::Reader::from_str(manifest);
+    loop {
+        match reader.read_event().context("invalid VSIX XML manifest")? {
+            quick_xml::events::Event::Start(element) | quick_xml::events::Event::Empty(element)
+                if element.local_name().as_ref() == b"Identity" =>
+            {
+                for attribute in element.attributes() {
+                    let attribute = attribute.context("invalid VSIX Identity attribute")?;
+                    if attribute.key.local_name().as_ref() == b"TargetPlatform" {
+                        let value = attribute.decode_and_unescape_value(reader.decoder())?;
+                        anyhow::ensure!(
+                            value.is_empty() || value == "universal" || value == expected,
+                            "extension targets {value}, but SideX requires {expected}"
+                        );
+                    }
+                }
+            }
+            quick_xml::events::Event::Eof => return Ok(()),
+            _ => {}
+        }
+    }
 }
 
 /// Restore Unix executable bits for files shipped inside a VSIX.
@@ -263,7 +442,7 @@ fn apply_file_mode(path: &Path, mode: Option<u32>, rel: &str) {
         || rel.ends_with(".command");
 
     let target_mode = match mode {
-        Some(m) if m != 0 => m & 0o7777,
+        Some(m) if m != 0 => m & 0o777,
         _ if is_script_like => 0o755,
         _ => return,
     };
@@ -354,6 +533,144 @@ mod tests {
         let r = validate_vsix(&pkg);
         assert!(r.valid);
         assert!(r.errors.is_empty());
+    }
+
+    fn write_vsix(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut archive = zip::ZipWriter::new(file.reopen().unwrap());
+        for (name, content) in entries {
+            archive
+                .start_file(
+                    *name,
+                    zip::write::SimpleFileOptions::default().unix_permissions(0o755),
+                )
+                .unwrap();
+            archive.write_all(content).unwrap();
+        }
+        archive.finish().unwrap();
+        file
+    }
+
+    #[test]
+    fn platform_validation_accepts_universal_and_exact_build_only() {
+        for platform in ["", "universal", "darwin-arm64"] {
+            let xml = format!(
+                r#"<PackageManifest><Metadata><Identity TargetPlatform="{platform}" /></Metadata></PackageManifest>"#
+            );
+            assert!(validate_target_platform(Some(&xml), "darwin-arm64").is_ok());
+        }
+        assert!(validate_target_platform(None, "darwin-arm64").is_ok());
+        assert!(validate_target_platform(
+            Some("<Identity TargetPlatform='linux-arm64'/>"),
+            "darwin-arm64"
+        )
+        .is_err());
+        assert!(validate_target_platform(
+            Some("<Identity TargetPlatform='linux-x64'"),
+            "linux-x64"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_identity_and_payload_before_replacing_installed_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("test.ext");
+        std::fs::create_dir(&old).unwrap();
+        std::fs::write(old.join("previous.txt"), b"keep me").unwrap();
+        let fixture = write_vsix(&[
+            (
+                "extension/package.json",
+                br#"{"name":"ext","publisher":"test","version":"2.0.0"}"#,
+            ),
+            ("extension/main.js", b"new"),
+        ]);
+        let mut pkg = unpack_vsix(fixture.path()).unwrap();
+        pkg.contents.insert("../../escape".into(), vec![1]);
+        assert!(install_package(&pkg, dir.path()).is_err());
+        assert_eq!(std::fs::read(old.join("previous.txt")).unwrap(), b"keep me");
+        pkg.contents.remove("../../escape");
+        pkg.manifest.id = "../test.ext".into();
+        assert!(install_package(&pkg, dir.path()).is_err());
+        assert_eq!(std::fs::read(old.join("previous.txt")).unwrap(), b"keep me");
+    }
+
+    #[test]
+    fn local_and_gallery_install_share_permissions_and_atomic_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = write_vsix(&[
+            (
+                "extension/package.json",
+                br#"{"name":"ext","publisher":"test","version":"2.0.0"}"#,
+            ),
+            ("extension/bin/tool", b"#!/bin/sh\nexit 0\n"),
+        ]);
+        let old = dir.path().join("test.ext");
+        std::fs::create_dir(&old).unwrap();
+        std::fs::write(old.join("stale.txt"), b"obsolete").unwrap();
+        std::fs::create_dir_all(old.join(".global-storage/nested")).unwrap();
+        std::fs::write(old.join(".global-storage/nested/state.json"), b"user state").unwrap();
+        let manifest = crate::installer::install_from_vsix(fixture.path(), dir.path()).unwrap();
+        assert_eq!(manifest.version, "2.0.0");
+        assert!(!old.join("stale.txt").exists());
+        assert!(old.join("bin/tool").is_file());
+        assert_eq!(
+            std::fs::read(old.join(".global-storage/nested/state.json")).unwrap(),
+            b"user state"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_ne!(
+                std::fs::metadata(old.join("bin/tool"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o111,
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_wrong_platform_before_modifying_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = write_vsix(&[
+            ("extension.vsixmanifest", br#"<PackageManifest><Metadata><Identity TargetPlatform="not-this-platform"/></Metadata></PackageManifest>"#),
+            ("extension/package.json", br#"{"name":"ext","publisher":"test","version":"2.0.0"}"#),
+        ]);
+        assert!(crate::installer::install_from_vsix(fixture.path(), dir.path()).is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn archive_with_more_than_ten_thousand_entries_is_read_completely() {
+        use std::io::Write;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut archive = zip::ZipWriter::new(file.reopen().unwrap());
+        archive
+            .start_file(
+                "extension/package.json",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive
+            .write_all(br#"{"name":"ext","publisher":"test","version":"1.0.0"}"#)
+            .unwrap();
+        for i in 0..10_001 {
+            archive
+                .start_file(
+                    format!("extension/files/{i}"),
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+        }
+        archive.finish().unwrap();
+        let pkg = unpack_vsix(file.path()).unwrap();
+        assert_eq!(pkg.contents.len(), 10_002);
+        assert!(pkg.contents.contains_key("files/10000"));
     }
 
     fn default_test_manifest() -> ExtensionManifest {

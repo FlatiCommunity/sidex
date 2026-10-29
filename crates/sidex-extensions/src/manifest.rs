@@ -487,14 +487,15 @@ pub fn path_to_uri_path(path: &str) -> String {
 
 /// Sanitize an extension id for use as a directory name.
 pub fn sanitize_ext_id(id: &str) -> Result<String> {
-    let clean: String = id
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
-        .collect();
-    if clean.is_empty() || clean.contains("..") {
+    if id.is_empty()
+        || id.split('.').any(str::is_empty)
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
         anyhow::bail!("invalid extension id: {id}");
     }
-    Ok(clean)
+    Ok(id.to_string())
 }
 
 fn version_weight(version: &str) -> Vec<u32> {
@@ -695,6 +696,11 @@ mod tests {
         );
         assert!(sanitize_ext_id("..").is_err());
         assert!(sanitize_ext_id("").is_err());
+        assert!(sanitize_ext_id("../test.ext").is_err());
+        assert!(sanitize_ext_id("test/ext").is_err());
+        assert!(sanitize_ext_id("test\\ext").is_err());
+        assert!(sanitize_ext_id("test ext").is_err());
+        assert!(sanitize_ext_id(".").is_err());
     }
 
     #[test]

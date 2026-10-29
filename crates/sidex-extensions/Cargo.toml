@@ -16,6 +16,7 @@ log = "0.4"
 walkdir = { workspace = true }
 reqwest = { workspace = true, features = ["json", "gzip", "brotli"] }
 zip = "2"
+quick-xml = "0.38"
 tempfile = "3"
 toml = "0.8"
 dirs = "6"
