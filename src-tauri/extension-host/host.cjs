@@ -105,13 +105,7 @@ process.on('unhandledRejection', (reason) => {
   } catch {}
 });
 
-process.env.VSCODE_NLS_CONFIG = JSON.stringify({
-  userLocale: 'en',
-  osLocale: 'en',
-  resolvedLanguage: 'en',
-  locale: 'en',
-  availableLanguages: {},
-});
+
 
 class ExtensionHost extends EventEmitter {
   constructor() {
@@ -162,6 +156,8 @@ class ExtensionHost extends EventEmitter {
     this._nextWatcherId = 1;
     this._activationPromises = new Map();
     this._failedExtensions = new Set();
+    this._language = 'en';
+    this._extensionApiCache = new Map();
   }
 
   initialize() {
@@ -169,19 +165,8 @@ class ExtensionHost extends EventEmitter {
     log('host initialized');
   }
 
-  shutdown() {
-    for (const [id, ext] of this._extensions) {
-      try {
-        if (ext.exports && typeof ext.exports.deactivate === 'function') {
-          const result = ext.exports.deactivate();
-          if (result && typeof result.then === 'function') {
-            result.catch((e) => log(`deactivate error (${id}): ${e.message}`));
-          }
-        }
-      } catch (e) {
-        log(`deactivate error (${id}): ${e.message}`);
-      }
-    }
+  async shutdown() {
+    await Promise.all([...this._extensions.keys()].map(extensionId => this._handleDeactivateExtension(0, { extensionId })));
     this._extensions.clear();
     log('host shut down');
   }
@@ -203,6 +188,8 @@ class ExtensionHost extends EventEmitter {
         return this._handleActivateExtension(id, params);
       case 'deactivateExtension':
         return this._handleDeactivateExtension(id, params);
+      case 'unloadExtension':
+        return this._handleUnloadExtension(id, params);
       case 'executeCommand':
         return this._handleExecuteCommand(id, params);
       case 'documentOpened':
@@ -336,6 +323,9 @@ class ExtensionHost extends EventEmitter {
     if (params && params.workspaceFolders) {
       this._workspaceFolders = params.workspaceFolders;
     }
+    if (params?.environment?.appLanguage) {
+      this._setLanguage(params.environment.appLanguage);
+    }
     return {
       id,
       result: {
@@ -415,7 +405,7 @@ class ExtensionHost extends EventEmitter {
     }
   }
 
-  _handleActivateExtension(id, params) {
+  async _handleActivateExtension(id, params) {
     try {
       const { extensionId } = params;
       const ext = this._extensions.get(extensionId);
@@ -431,36 +421,53 @@ class ExtensionHost extends EventEmitter {
           return { id, result: { activated: false, deferred: true } };
         }
       }
-      this._activateExtension(extensionId).catch((e) => {
-        log(`activation error (${extensionId}): ${e.message}`);
-      });
-      return { id, result: { activated: true } };
+      await this._activateExtension(extensionId);
+      return { id, result: { activated: Boolean(this._extensions.get(extensionId)?.activated) } };
     } catch (e) {
       return { id, error: e.message };
     }
   }
 
-  _handleDeactivateExtension(id, params) {
+  async _handleDeactivateExtension(id, params) {
     try {
       const { extensionId } = params;
       const ext = this._extensions.get(extensionId);
-      if (!ext) throw new Error(`extension not found: ${extensionId}`);
-      if (ext.exports && typeof ext.exports.deactivate === 'function') {
-        ext.exports.deactivate();
+      if (!ext) return { id, result: { deactivated: true } };
+      const pending = this._activationPromises.get(extensionId);
+      if (pending) await pending.catch(() => {});
+      if (!ext.activated && !ext.context) return { id, result: { deactivated: true } };
+      try {
+        if (typeof ext.module?.deactivate === 'function') await ext.module.deactivate();
+      } finally {
+        for (const subscription of ext.context?.subscriptions ?? []) {
+          try { subscription.dispose(); } catch (error) { log(`dispose error (${extensionId}): ${error.message}`); }
+        }
+        ext.context = null;
+        ext.activated = false;
+        this._failedExtensions.delete(extensionId);
+        this._extensionApiCache.delete(extensionId);
       }
-      ext.activated = false;
       return { id, result: { deactivated: true } };
     } catch (e) {
       return { id, error: e.message };
     }
   }
 
+  async _handleUnloadExtension(id, params) {
+    const result = await this._handleDeactivateExtension(id, params);
+    if (!result.error) {
+      this._extensions.delete(params.extensionId);
+      this._failedExtensions.delete(params.extensionId);
+      this._extensionApiCache.delete(params.extensionId);
+    }
+    return result;
+  }
+
   async _handleExecuteCommand(id, params) {
     const { command, args } = params;
     let handler = this._commands.get(command);
     if (!handler) {
-      this._checkActivationEvents(`onCommand:${command}`);
-      await new Promise((r) => setTimeout(r, 100));
+      await this._checkActivationEvents(`onCommand:${command}`);
       handler = this._commands.get(command);
     }
     if (!handler) return { id, error: `unknown command: ${command}` };
@@ -996,7 +1003,10 @@ class ExtensionHost extends EventEmitter {
   }
 
   _handleGetExtensionState(id) {
-    const commands = [...this._commands.keys()];
+    const commands = [...new Set([
+      ...this._commands.keys(),
+      ...[...this._extensions.values()].flatMap(extension => (extension.manifest.contributes?.commands || []).map(command => command.command).filter(Boolean)),
+    ])];
     const webviewViewProviders = this._webviewViewProviders ? [...this._webviewViewProviders.keys()] : [];
     const customEditorProviders = this._customEditorProviders ? [...this._customEditorProviders.keys()] : [];
     return {
@@ -1492,19 +1502,58 @@ class ExtensionHost extends EventEmitter {
   }
 
   _checkActivationEvents(event) {
+    const pending = [];
     for (const [extId, ext] of this._extensions) {
       if (ext.activated) continue;
       const events = ext.manifest.activationEvents || [];
-      if (events.includes(event) || events.includes('*') || events.includes('onStartupFinished')) {
-        this._activateExtension(extId).catch((e) => log(`activation error (${extId}): ${e.message}`));
+      const contributes = ext.manifest.contributes || {};
+      // VS Code >= 1.74 derives these events from contribution points.
+      const implicit = event.startsWith('onCommand:')
+        ? (contributes.commands || []).some(command => event === `onCommand:${command.command}`)
+        : event.startsWith('onLanguage:')
+          ? (contributes.languages || []).some(language => event === `onLanguage:${language.id}`)
+          : event.startsWith('onView:')
+            ? Object.values(contributes.views || {}).flat().some(view => event === `onView:${view.id}`)
+            : false;
+      if (implicit || events.includes(event) || events.includes('*')) {
+        pending.push(this._activateExtension(extId).catch((error) => {
+          log(`activation error (${extId}): ${error.message}`);
+        }));
       }
     }
+    return Promise.all(pending);
+  }
+
+  _setLanguage(locale) {
+    this._language = typeof locale === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(locale) ? locale.toLowerCase() : 'en';
+    process.env.VSCODE_NLS_CONFIG = JSON.stringify({
+      userLocale: this._language, osLocale: this._language, resolvedLanguage: this._language,
+      locale: this._language, availableLanguages: this._language === 'en' ? {} : { '*': this._language },
+    });
+    this._extensionApiCache.clear();
+  }
+
+  apiForExtensionFile(filename) {
+    if (!filename) return _vscodeShim;
+    const candidates = [...this._extensions.entries()].filter(([, extension]) => {
+      const relative = path.relative(extension.extensionPath, filename);
+      return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+    }).sort((a, b) => b[1].extensionPath.length - a[1].extensionPath.length);
+    const match = candidates[0];
+    if (!match) return _vscodeShim;
+    const [extensionId, extension] = match;
+    if (!this._extensionApiCache.has(extensionId)) {
+      const api = Object.create(_vscodeShim);
+      Object.defineProperty(api, 'l10n', { value: createLocalization(extension, this._language), enumerable: true });
+      this._extensionApiCache.set(extensionId, api);
+    }
+    return this._extensionApiCache.get(extensionId);
   }
 
   _readManifest(extensionPath) {
     const pkgPath = path.join(extensionPath, 'package.json');
     if (!fs.existsSync(pkgPath)) throw new Error(`no package.json at ${extensionPath}`);
-    const raw = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    const raw = JSON.parse(fs.readFileSync(pkgPath, 'utf-8').replace(/^\uFEFF/, ''));
     const publisher = raw.publisher || 'unknown';
     const name = raw.name || path.basename(extensionPath);
     return {
@@ -1521,33 +1570,42 @@ class ExtensionHost extends EventEmitter {
 
   async _activateExtension(extensionId) {
     const ext = this._extensions.get(extensionId);
-    if (!ext) return null;
+    if (!ext) throw new Error(`extension not found: ${extensionId}`);
     if (ext.activated) return ext.exports;
     if (this._activationPromises.has(extensionId)) return this._activationPromises.get(extensionId);
-    if (this._failedExtensions.has(extensionId)) return null;
-    if (!ext.manifest.main) {
-      ext.activated = true;
-      return;
-    }
-
-    const mainPath = path.resolve(ext.extensionPath, ext.manifest.main);
-    if (!fs.existsSync(mainPath) && !fs.existsSync(mainPath + '.js')) {
-      log(`main not found: ${mainPath}`);
-      ext.activated = true;
-      return;
-    }
+    if (this._failedExtensions.has(extensionId)) throw new Error(`extension activation previously failed: ${extensionId}`);
+    // Validate the dependency graph before sharing activation promises. This
+    // also detects cycles when startup activates multiple extensions at once.
+    const checkDependencies = (id, visiting = new Set(), checked = new Set()) => {
+      if (visiting.has(id)) throw new Error(`cyclic extension dependency: ${[...visiting, id].join(' -> ')}`);
+      if (checked.has(id)) return;
+      const dependency = this._extensions.get(id);
+      if (!dependency) throw new Error(`missing extension dependency: ${id}`);
+      visiting.add(id);
+      for (const child of dependency.manifest.extensionDependencies || []) checkDependencies(child, visiting, checked);
+      visiting.delete(id);
+      checked.add(id);
+    };
+    checkDependencies(extensionId);
 
     const context = this._createExtensionContext(extensionId, ext);
-    const activationPromise = (async () => {
+    const activationPromise = Promise.resolve().then(async () => {
       try {
-        const mod = await this._loadExtensionModule(mainPath);
+        for (const dependency of ext.manifest.extensionDependencies || []) await this._activateExtension(dependency);
+        if (!ext.manifest.main) {
+          ext.activated = true;
+          return;
+        }
+        const mainPath = path.resolve(ext.extensionPath, ext.manifest.main);
+        if (!fs.existsSync(mainPath) && !fs.existsSync(mainPath + '.js')) throw new Error(`extension entry point not found: ${mainPath}`);
+        const mod = await this._loadExtensionModule(mainPath, ext.manifest.packageJSON?.type);
         ext.module = mod;
         ext.context = context;
         if (typeof mod.activate === 'function') {
           this._currentActivatingExtension = { id: extensionId, displayName: ext.manifest?.displayName || ext.manifest?.name || extensionId };
           try {
             const result = await Promise.resolve(mod.activate(context));
-            ext.exports = result || mod;
+            ext.exports = result === undefined ? mod : result;
           } finally {
             this._currentActivatingExtension = null;
           }
@@ -1560,22 +1618,31 @@ class ExtensionHost extends EventEmitter {
         this.emit('event', { type: 'extensionActivated', extensionId });
         return ext.exports;
       } catch (e) {
+        for (const subscription of context.subscriptions) {
+          try { subscription.dispose(); } catch {}
+        }
+        ext.context = null;
         this._failedExtensions.add(extensionId);
         log(`activate error (${extensionId}): ${e.stack || e.message}`);
         throw e;
       } finally {
         this._activationPromises.delete(extensionId);
       }
-    })();
+    });
     this._activationPromises.set(extensionId, activationPromise);
     return activationPromise;
   }
 
-  async _loadExtensionModule(mainPath) {
+  async _loadExtensionModule(mainPath, packageType) {
+    if (mainPath.endsWith('.mjs') || (packageType === 'module' && !mainPath.endsWith('.cjs'))) {
+      const withExt = fs.existsSync(mainPath) ? mainPath : `${mainPath}.js`;
+      const mod = await import(pathToFileURL(withExt).href);
+      return mod.default && typeof mod.activate === 'undefined' ? mod.default : mod;
+    }
     try {
       return require(mainPath);
     } catch (e) {
-      if (e && e.code === 'ERR_REQUIRE_ESM') {
+      if (e && (e.code === 'ERR_REQUIRE_ESM' || e.code === 'ERR_REQUIRE_ASYNC_MODULE')) {
         const withExt = fs.existsSync(mainPath) ? mainPath : `${mainPath}.js`;
         const mod = await import(pathToFileURL(withExt).href);
         return mod && mod.default && typeof mod.activate === 'undefined' ? mod.default : mod;
@@ -1587,8 +1654,16 @@ class ExtensionHost extends EventEmitter {
   _createExtensionContext(extensionId, ext) {
     const extensionPath = ext.extensionPath;
     const subscriptions = [];
-    const storagePath = path.join(extensionPath, '.storage');
-    const globalStoragePath = path.join(extensionPath, '.global-storage');
+    const storageRoot = process.env.SIDEX_GLOBAL_STORAGE_DIR || path.join(require('os').homedir(), '.sidex', 'data', 'User', 'globalStorage');
+    const globalStoragePath = path.join(storageRoot, extensionId);
+    const workspaceKey = crypto.createHash('sha256').update(JSON.stringify([...this._workspaceFolders].sort())).digest('hex').slice(0, 32);
+    const storagePath = path.join(path.dirname(storageRoot), 'workspaceStorage', workspaceKey, extensionId);
+    for (const [legacy, destination] of [[path.join(extensionPath, '.global-storage'), globalStoragePath], [path.join(extensionPath, '.storage'), storagePath]]) {
+      if (fs.existsSync(legacy) && !fs.existsSync(destination)) {
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.renameSync(legacy, destination);
+      }
+    }
     try {
       fs.mkdirSync(storagePath, { recursive: true });
     } catch {}
@@ -1597,12 +1672,8 @@ class ExtensionHost extends EventEmitter {
     } catch {}
 
     const secrets = new Map();
-    const workspaceState = createMemento();
-    const globalState = createMemento();
-    globalState.update('PYTHON_GLOBAL_STORAGE_KEYS', []);
-    globalState.update('PYTHON_EXTENSION_GLOBAL_STORAGE_KEYS', []);
-    workspaceState.update('PYTHON_WORKSPACE_STORAGE_KEYS', []);
-    workspaceState.update('PYTHON_EXTENSION_WORKSPACE_STORAGE_KEYS', []);
+    const workspaceState = createMemento(path.join(storagePath, 'state.json'));
+    const globalState = createMemento(path.join(globalStoragePath, 'state.json'));
     return {
       extensionPath,
       extensionUri: VscUri.file(extensionPath),
@@ -1612,7 +1683,7 @@ class ExtensionHost extends EventEmitter {
       storageUri: VscUri.file(storagePath),
       globalStorageUri: VscUri.file(globalStoragePath),
       logUri: VscUri.file(storagePath),
-      extensionMode: 3, // Production
+      extensionMode: 1, // Production
       subscriptions,
       asAbsolutePath: (rel) => path.join(extensionPath, rel),
       workspaceState,
@@ -1687,21 +1758,81 @@ function log(msg) {
 const noopDisposable = { dispose() {} };
 const noopEvent = (_listener) => noopDisposable;
 
-function createMemento() {
-  const store = new Map();
+function createMemento(storageFile) {
+  let initial = {};
+  let loadError;
+  try {
+    initial = JSON.parse(fs.readFileSync(storageFile, 'utf8'));
+    if (!initial || typeof initial !== 'object' || Array.isArray(initial)) throw new Error('extension state must be an object');
+  } catch (error) {
+    initial = {};
+    if (error.code !== 'ENOENT') {
+      log(`cannot load extension state ${storageFile}: ${error.message}`);
+      // Preserve corrupt bytes before accepting new state. If the backup cannot
+      // be written, fail updates instead of silently destroying the user's data.
+      try { fs.copyFileSync(storageFile, `${storageFile}.corrupt.${crypto.randomUUID()}`, fs.constants.COPYFILE_EXCL); }
+      catch (backupError) { loadError = backupError; }
+    }
+  }
+  const store = new Map(Object.entries(initial && typeof initial === 'object' ? initial : {}));
+  let pendingWrite = Promise.resolve();
   return {
     keys: () => [...store.keys()],
-    get: (key, defaultValue) => {
-      if (!store.has(key)) return defaultValue;
-      const v = store.get(key);
-      return v === undefined || v === null ? defaultValue : v;
-    },
+    get: (key, defaultValue) => store.has(key) ? store.get(key) : defaultValue,
     update: (key, value) => {
-      store.set(key, value);
-      return Promise.resolve();
+      if (loadError) return Promise.reject(loadError);
+      if (value === undefined) store.delete(key); else store.set(key, value);
+      const contents = JSON.stringify(Object.fromEntries(store));
+      pendingWrite = pendingWrite.catch(() => {}).then(async () => {
+        await fs.promises.mkdir(path.dirname(storageFile), { recursive: true });
+        const temporary = `${storageFile}.${crypto.randomUUID()}.tmp`;
+        try {
+          await fs.promises.writeFile(temporary, contents, { mode: 0o600 });
+          await fs.promises.rename(temporary, storageFile);
+        } finally {
+          await fs.promises.unlink(temporary).catch(() => {});
+        }
+      });
+      return pendingWrite;
     },
     setKeysForSync: () => {},
   };
+}
+
+function createLocalization(extension, locale) {
+  let bundle;
+  let bundleUri;
+  const l10n = extension?.manifest?.packageJSON?.l10n;
+  if (typeof l10n === 'string' && locale !== 'en') {
+    const candidates = [locale, locale.split('-')[0]].filter((value, index, all) => all.indexOf(value) === index);
+    for (const candidate of candidates) {
+      const filename = path.resolve(extension.extensionPath, l10n, `bundle.l10n.${candidate}.json`);
+      const relative = path.relative(extension.extensionPath, filename);
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
+      try {
+        const value = JSON.parse(fs.readFileSync(filename, 'utf8').replace(/^\uFEFF/, ''));
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          bundle = Object.fromEntries(Object.entries(value).filter(([, translation]) => typeof translation === 'string'));
+          bundleUri = VscUri.file(filename);
+          break;
+        }
+      } catch {}
+    }
+  }
+  return Object.freeze({
+    bundle, uri: bundleUri,
+    t(message, ...args) {
+      const details = typeof message === 'string' ? { message, args } : message;
+      const text = details?.message ?? '';
+      const comment = Array.isArray(details?.comment) ? details.comment.join('') : details?.comment;
+      const key = comment ? `${text}/${comment}` : text;
+      const values = typeof message === 'string'
+        ? (args.length === 1 && args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : args)
+        : (details.args ?? {});
+      return (bundle?.[key] ?? text).replace(/\{([^}]+)\}/g, (placeholder, name) =>
+        Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : placeholder);
+    },
+  });
 }
 
 function serializeCompletionItem(item) {
@@ -3845,7 +3976,7 @@ function createVscodeShim() {
       appName: 'SideX',
       appRoot: process.cwd(),
       appHost: 'desktop',
-      language: 'en',
+      get language() { return host._language; },
       machineId: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
       sessionId: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
       uriScheme: 'sidex',
@@ -4902,25 +5033,7 @@ function createVscodeShim() {
     authentication,
     tests,
     version: '1.110.0',
-    l10n: {
-      t: (message, ...args) => {
-        let str = typeof message === 'string' ? message : message.message || '';
-        if (args.length > 0) {
-          if (typeof args[0] === 'object' && !Array.isArray(args[0])) {
-            for (const [key, val] of Object.entries(args[0])) {
-              str = str.replace(new RegExp(`\\{${key}\\}`, 'g'), String(val));
-            }
-          } else {
-            for (let i = 0; i < args.length; i++) {
-              str = str.replace(new RegExp(`\\{${i}\\}`, 'g'), String(args[i]));
-            }
-          }
-        }
-        return str;
-      },
-      bundle: undefined,
-      uri: undefined,
-    },
+    l10n: createLocalization(undefined, 'en'),
     chat: {
       createChatParticipant: (id, handler) => {
         const feedbackEmitter = new VscEventEmitter();
@@ -4990,6 +5103,11 @@ function createVscodeShim() {
 
 function installVscodeShim() {
   const Module = require('module');
+  const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) {
+    if (request === 'vscode' && hostInstance) return hostInstance.apiForExtensionFile(parent?.filename);
+    return originalLoad.call(this, request, parent, isMain);
+  };
   const original = Module._resolveFilename;
   Module._resolveFilename = function (request, parent, isMain, options) {
     if (request === 'vscode') return '__sidex_vscode_shim__';
@@ -5001,17 +5119,7 @@ function installVscodeShim() {
     loaded: true,
     exports: null,
   };
-  const hostDir = __dirname;
-  const vscDir = path.join(hostDir, 'node_modules', 'vscode');
-  try {
-    fs.mkdirSync(vscDir, { recursive: true });
-    fs.writeFileSync(path.join(vscDir, 'package.json'), JSON.stringify({
-      name: 'vscode',
-      version: '1.110.0',
-      main: 'index.cjs',
-    }));
-    fs.writeFileSync(path.join(vscDir, 'index.cjs'), "module.exports = globalThis.__sidex_vscode_shim__ || require('__sidex_vscode_shim__');");
-  } catch {}
+
 }
 
 installVscodeShim();
@@ -5026,29 +5134,33 @@ try {
     const hostCjsPath = path.resolve(__dirname, 'host.cjs');
     const shimExports = require.cache['__sidex_vscode_shim__']?.exports;
     const namedKeys = shimExports ? Object.keys(shimExports).filter(k => k !== 'default' && k !== '__esModule') : [];
-    const esmLines = [
-      `import { createRequire } from 'node:module';`,
-      `import { fileURLToPath } from 'node:url';`,
-      `const _require = createRequire(${JSON.stringify(hostCjsPath)});`,
-      `const _shim = globalThis.__sidex_vscode_shim__ || _require('__sidex_vscode_shim__');`,
-      `export default _shim;`,
-      ...namedKeys.map(k => `export const ${k} = _shim.${k};`),
-    ];
-    const esmPath = path.join(__dirname, 'node_modules', 'vscode', 'index.mjs');
-    fs.writeFileSync(esmPath, esmLines.join('\n'));
-    const esmUrl = `file://${esmPath.replace(/\\/g, '/')}`;
-
     const loaderSrc = [
-      `const ESM_URL = ${JSON.stringify(esmUrl)};`,
+      `const HOST = ${JSON.stringify(hostCjsPath)};`,
+      `const KEYS = ${JSON.stringify(namedKeys)};`,
       `export async function resolve(specifier, context, nextResolve) {`,
-      `  if (specifier === 'vscode') return { url: ESM_URL, shortCircuit: true };`,
+      `  if (specifier === 'vscode') {`,
+      `    const importer = context.parentURL || '';`,
+      `    const source = [`,
+      `      "import { createRequire } from 'node:module';",`,
+      `      "import { fileURLToPath } from 'node:url';",`,
+      `      'const host = createRequire(' + JSON.stringify(HOST) + ')(' + JSON.stringify(HOST) + ');',`,
+      `      'const shim = host.apiForExtensionFile(' + (importer.startsWith('file:') ? 'fileURLToPath(' + JSON.stringify(importer) + ')' : 'undefined') + ');',`,
+      `      'export default shim;',`,
+      `      ...KEYS.map(key => 'export const ' + key + ' = shim.' + key + ';')`,
+      `    ].join('\\n');`,
+      `    return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };`,
+      `  }`,
       `  return nextResolve(specifier, context);`,
       `}`,
     ].join('\n');
     register(`data:text/javascript,${encodeURIComponent(loaderSrc)}`);
   }
-} catch {}
+} catch (error) {
+  log(`ES module extension loader unavailable: ${error.message}`);
+}
 
+
+module.exports = hostInstance;
 
 if (process.env.SIDEX_EXTENSION_HOST === 'true' && process.send) {
   const host = hostInstance;
@@ -5065,6 +5177,11 @@ if (process.env.SIDEX_EXTENSION_HOST === 'true' && process.send) {
     }
   } catch (e) {
     log(`failed to parse init data: ${e.message}`);
+  }
+
+  host._setLanguage(initData?.environment?.appLanguage || 'en');
+  if (Array.isArray(initData?.workspace?.folders)) {
+    host._workspaceFolders = initData.workspace.folders.map(folder => uriPathToFsPath(folder.uri?.path || '')).filter(Boolean);
   }
 
   if (initData && initData.extensions) {

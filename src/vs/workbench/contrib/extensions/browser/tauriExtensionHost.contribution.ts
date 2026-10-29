@@ -236,12 +236,12 @@ class TauriExtensionHostContribution extends Disposable implements IWorkbenchCon
 			const source = result.source;
 			let installed: { id: string; path: string } | undefined;
 
-			if (source && !URI.isUri(source) && (source as IGalleryExtension).assets?.download?.uri) {
+			if (result.local?.location.scheme === 'file') {
+				installed = { id: extId, path: result.local.location.fsPath };
+			} else if (source && !URI.isUri(source) && (source as IGalleryExtension).assets?.download?.uri) {
 				const downloadUrl = (source as IGalleryExtension).assets.download.uri;
 				this.logService.info(`[ExtHost] Downloading extension ${extId} from gallery`);
-				installed = await invoke<{ id: string; path: string }>('install_extension_from_url', { url: downloadUrl });
-			} else if (result.local?.location.scheme === 'file') {
-				installed = { id: extId, path: result.local.location.fsPath };
+				installed = await invoke<{ id: string; path: string }>('install_extension_from_url', { url: downloadUrl, expectedId: extId });
 			}
 
 			if (!installed?.path) {
@@ -271,11 +271,12 @@ class TauriExtensionHostContribution extends Disposable implements IWorkbenchCon
 	private async _removeUninstalledExtension(event: DidUninstallExtensionEvent): Promise<void> {
 		const extId = event.identifier.id;
 		try {
-			const { invoke } = await import('@tauri-apps/api/core');
-			await invoke('uninstall_extension', { extensionId: extId });
-			this.logService.info(`[ExtHost] Removed extension ${extId} from disk`);
+			if (this._connected && this._handshakeSeen) {
+				await this._request('unloadExtension', { extensionId: extId });
+			}
+			this.logService.info(`[ExtHost] Deactivated uninstalled extension ${extId}`);
 		} catch (err: any) {
-			this.logService.warn(`[ExtHost] Failed to remove ${extId} from disk: ${err?.message ?? err}`);
+			this.logService.warn(`[ExtHost] Failed to unload ${extId}: ${err?.message ?? err}`);
 		}
 	}
 
