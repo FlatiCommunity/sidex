@@ -3,6 +3,7 @@
  *  Entry point. Globals set by inline script in index.html.
  *--------------------------------------------------------------------------------------------*/
 
+import './webview-compat.js';
 import { loadNlsMessages } from './nls-loader.js';
 import { initializeProductConfiguration } from './product-config.js';
 
@@ -307,18 +308,21 @@ async function boot() {
 	setupMenuActions();
 	setupWindowStateSave();
 	setupNativePathEvents();
-	for (const target of startupTargets) {
-		if (target.kind === 'file') {
-			void commands
-				.executeCommand('vscode.open', URI.file(target.path), {
-					preview: false,
-					selection: target.line ? { startLineNumber: target.line, startColumn: target.column || 1 } : undefined
-				})
-				.catch(error => console.error('[SideX] Failed to open launch file:', error));
-		} else if (target !== launchWorkspace) {
-			const destination =
-				target.kind === 'workspace' ? { workspaceUri: URI.file(target.path) } : { folderUri: URI.file(target.path) };
-			void options.workspaceProvider.open(destination, { reuse: false });
+	openLaunchTargets(startupTargets);
+	function openLaunchTargets(targets: typeof startupTargets) {
+		for (const target of targets) {
+			if (target.kind === 'file') {
+				void commands
+					.executeCommand('vscode.open', URI.file(target.path), {
+						preview: false,
+						selection: target.line ? { startLineNumber: target.line, startColumn: target.column || 1 } : undefined
+					})
+					.catch(error => console.error('[SideX] Failed to open launch file:', error));
+			} else if (target !== launchWorkspace) {
+				const destination =
+					target.kind === 'workspace' ? { workspaceUri: URI.file(target.path) } : { folderUri: URI.file(target.path) };
+				void options.workspaceProvider.open(destination, { reuse: false });
+			}
 		}
 	}
 
@@ -327,7 +331,17 @@ async function boot() {
 			return;
 		}
 		try {
-			const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+			const [{ getCurrentWebview }, { listen }, { invoke }] = await Promise.all([
+				import('@tauri-apps/api/webview'),
+				import('@tauri-apps/api/event'),
+				import('@tauri-apps/api/core')
+			]);
+			const drainTargets = async () => openLaunchTargets(await invoke<typeof startupTargets>('take_startup_targets'));
+			const stopOpenEvents = await listen('sidex-open-targets', () => {
+				void drainTargets();
+			});
+			window.addEventListener('beforeunload', stopOpenEvents, { once: true });
+			await drainTargets();
 			const unlisten = await getCurrentWebview().onDragDropEvent(async event => {
 				if (event.payload.type === 'drop') {
 					await env.getUriScheme(); // Resolves after the workbench installs its handlers.
@@ -420,11 +434,13 @@ function setupMenuActions() {
 		new_window: 'workbench.action.newWindow',
 		open_file: 'workbench.action.files.openFile',
 		open_folder: 'workbench.action.files.openFolder',
+		open_recent: 'workbench.action.openRecent',
 		save: 'workbench.action.files.save',
 		save_as: 'workbench.action.files.saveAs',
 		save_all: 'workbench.action.files.saveAll',
 		close_editor: 'workbench.action.closeActiveEditor',
 		close_window: 'workbench.action.closeWindow',
+		close_folder: 'workbench.action.closeFolder',
 		// Edit
 		find: 'actions.find',
 		replace: 'editor.action.startFindReplaceAction',
@@ -442,6 +458,7 @@ function setupMenuActions() {
 		select_all_occurrences: 'editor.action.selectHighlights',
 		// View
 		command_palette: 'workbench.action.showCommands',
+		open_view: 'workbench.action.openView',
 		explorer: 'workbench.view.explorer',
 		search: 'workbench.view.search',
 		source_control: 'workbench.view.scm',
@@ -475,6 +492,10 @@ function setupMenuActions() {
 		run_task: 'workbench.action.tasks.runTask',
 		run_build_task: 'workbench.action.tasks.build',
 		// Help
+		welcome: 'workbench.action.showWelcome',
+		documentation: 'workbench.action.openDocumentationUrl',
+		release_notes: 'workbench.action.showReleaseNotes',
+		report_issue: 'workbench.action.openIssueReporter',
 		keyboard_shortcuts: 'workbench.action.keybindingsEditor'
 	};
 
@@ -533,7 +554,8 @@ function setupMenuActions() {
 			if (commandService) {
 				await commandService.executeCommand(commandId);
 			} else {
-				console.warn(`[SideX] Command service not ready, queuing: ${commandId}`);
+				const { commands } = await import('./vs/workbench/browser/web.factory.js');
+				await commands.executeCommand(commandId);
 			}
 		} catch (err) {
 			console.error(`[SideX] Command ${commandId} failed:`, err);

@@ -13,6 +13,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { AbstractFileDialogService } from './abstractFileDialogService.js';
 import { Schemas } from '../../../../base/common/network.js';
+import { localize } from '../../../../nls.js';
 
 /**
  * SideX file dialog service — always routes through the Tauri native dialog
@@ -41,8 +42,25 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 	}
 
 	async pickWorkspaceAndOpen(options: IPickAndOpenOptions): Promise<void> {
-		// Workspaces are not directly pickable in Tauri — fall back to folder open.
-		return this._tauriPickFolderAndOpen(options);
+		try {
+			const { open } = await import('@tauri-apps/plugin-dialog');
+			const title = localize('openWorkspace', 'Open Workspace');
+			const selected = await open({
+				directory: false,
+				multiple: false,
+				title,
+				defaultPath: options.defaultUri?.scheme === Schemas.file ? options.defaultUri.fsPath : undefined,
+				filters: [{ name: title, extensions: ['code-workspace'] }]
+			});
+			if (selected && typeof selected === 'string') {
+				await this.hostService.openWindow([{ workspaceUri: URI.file(selected) }], {
+					forceNewWindow: options.forceNewWindow,
+					remoteAuthority: options.remoteAuthority
+				});
+			}
+		} catch (e) {
+			console.error('[SideX] Failed to open workspace dialog:', e);
+		}
 	}
 
 	async pickFileToSave(defaultUri: URI, availableFileSystems?: string[]): Promise<URI | undefined> {
@@ -60,7 +78,12 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 	private async _tauriPickFolderAndOpen(options: IPickAndOpenOptions): Promise<void> {
 		try {
 			const { open } = await import('@tauri-apps/plugin-dialog');
-			const selected = await open({ directory: true, multiple: false, title: 'Open Folder' });
+			const selected = await open({
+				directory: true,
+				multiple: false,
+				title: localize('openFolder', 'Open Folder'),
+				defaultPath: options.defaultUri?.scheme === Schemas.file ? options.defaultUri.fsPath : undefined
+			});
 			if (selected && typeof selected === 'string') {
 				const folderUri = URI.file(selected);
 				await this.hostService.openWindow([{ folderUri }], {
@@ -73,10 +96,15 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 		}
 	}
 
-	private async _tauriPickFileAndOpen(_options: IPickAndOpenOptions): Promise<void> {
+	private async _tauriPickFileAndOpen(options: IPickAndOpenOptions): Promise<void> {
 		try {
 			const { open } = await import('@tauri-apps/plugin-dialog');
-			const selected = await open({ directory: false, multiple: false, title: 'Open File' });
+			const selected = await open({
+				directory: false,
+				multiple: false,
+				title: localize('openFile', 'Open File'),
+				defaultPath: options.defaultUri?.scheme === Schemas.file ? options.defaultUri.fsPath : undefined
+			});
 			if (selected && typeof selected === 'string') {
 				const fileUri = URI.file(selected);
 				await this.editorService.openEditor({ resource: fileUri, options: { pinned: true } });
