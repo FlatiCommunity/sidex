@@ -715,7 +715,11 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 				url: galleryExtension.assets.download.uri,
 				expectedId: galleryExtension.identifier.id
 			});
-			webExtension = await this.toWebExtensionFromLocalResource(URI.file(installed.path), galleryExtension.identifier, metadata);
+			webExtension = await this.toWebExtensionFromLocalResource(
+				URI.file(installed.path),
+				galleryExtension.identifier,
+				metadata
+			);
 		} else {
 			webExtension = await this.toWebExtensionFromGallery(galleryExtension, metadata);
 		}
@@ -723,9 +727,19 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 	}
 
 	async addExtension(location: URI, metadata: Metadata, profileLocation: URI): Promise<IScannedExtension> {
-		const webExtension = (globalThis as any).__SIDEX_TAURI__ === true && location.scheme === 'file'
-			? await this.toWebExtensionFromLocalResource(location, undefined, metadata)
-			: await this.toWebExtension(location, undefined, undefined, undefined, undefined, undefined, undefined, metadata);
+		const webExtension =
+			(globalThis as any).__SIDEX_TAURI__ === true && location.scheme === 'file'
+				? await this.toWebExtensionFromLocalResource(location, undefined, metadata)
+				: await this.toWebExtension(
+						location,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						metadata
+					);
 		const extension = await this.toScannedExtension(webExtension, false);
 		await this.addToInstalledExtensions([webExtension], profileLocation);
 		return extension;
@@ -830,8 +844,9 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 	private async addToInstalledExtensions(webExtensions: IWebExtension[], profileLocation: URI): Promise<void> {
 		await this.writeInstalledExtensions(profileLocation, installedExtensions => {
 			// Remove the existing extension to avoid duplicates
-			installedExtensions = installedExtensions.filter(installedExtension =>
-				!webExtensions.some(extension => areSameExtensions(installedExtension.identifier, extension.identifier))
+			installedExtensions = installedExtensions.filter(
+				installedExtension =>
+					!webExtensions.some(extension => areSameExtensions(installedExtension.identifier, extension.identifier))
 			);
 			installedExtensions.push(...webExtensions);
 			return installedExtensions;
@@ -844,10 +859,14 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 			const { invoke } = await import('@tauri-apps/api/core');
 			const native = await invoke<{ id: string; path: string }[]>('list_installed_extensions');
 			const locations = new Map(native.map(extension => [extension.id.toLowerCase(), extension.path]));
-			installedExtensions = await Promise.all(installedExtensions.map(async extension => {
-				const path = locations.get(extension.identifier.id.toLowerCase());
-				return path ? this.toWebExtensionFromLocalResource(URI.file(path), extension.identifier, extension.metadata) : extension;
-			}));
+			installedExtensions = await Promise.all(
+				installedExtensions.map(async extension => {
+					const path = locations.get(extension.identifier.id.toLowerCase());
+					return path
+						? this.toWebExtensionFromLocalResource(URI.file(path), extension.identifier, extension.metadata)
+						: extension;
+				})
+			);
 		}
 
 		// If current profile is not a default profile, then add the application extensions to the list
@@ -889,19 +908,28 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 		return [...result.values()];
 	}
 
-	private async toWebExtensionFromLocalResource(location: URI, identifier?: IExtensionIdentifier, metadata?: Metadata): Promise<IWebExtension> {
+	private async toWebExtensionFromLocalResource(
+		location: URI,
+		identifier?: IExtensionIdentifier,
+		metadata?: Metadata
+	): Promise<IWebExtension> {
 		const directory = await this.fileService.resolve(location);
-		const resources = directory.children?.filter(child => !child.isDirectory).map(child => child.resource.toString()) ?? [];
+		const resources =
+			directory.children?.filter(child => !child.isDirectory).map(child => child.resource.toString()) ?? [];
 		const nls = this.getPackageNLSResourceMapFromResources(resources);
 		const findResource = (names: string[]): URI | undefined => {
 			const found = resources.find(resource => names.includes(basename(URI.parse(resource).path).toLowerCase()));
 			return found ? URI.parse(found) : undefined;
 		};
 		return this.toWebExtension(
-			location, identifier, undefined, nls,
+			location,
+			identifier,
+			undefined,
+			nls,
 			findResource(['package.nls.json']) ?? null,
 			findResource(['readme.md', 'readme.txt', 'readme']),
-			findResource(['changelog.md', 'changelog.txt', 'changelog']), metadata
+			findResource(['changelog.md', 'changelog.txt', 'changelog']),
+			metadata
 		);
 	}
 
@@ -999,7 +1027,6 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 				)
 			);
 		}
-
 
 		if (fallbackPackageNLSUri === undefined) {
 			try {

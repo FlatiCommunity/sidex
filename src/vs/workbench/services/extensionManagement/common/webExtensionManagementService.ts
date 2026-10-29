@@ -187,9 +187,10 @@ export class WebExtensionManagementService
 
 	async install(location: URI, options: InstallOptions = {}): Promise<ILocalExtension> {
 		this.logService.trace('ExtensionManagementService#install', location.toString());
-		const manifest = (globalThis as any).__SIDEX_TAURI__ === true && location.scheme === 'file' && /\.vsix$/i.test(location.path)
-			? await this.getManifest(location)
-			: await this.webExtensionsScannerService.scanExtensionManifest(location);
+		const manifest =
+			(globalThis as any).__SIDEX_TAURI__ === true && location.scheme === 'file' && /\.vsix$/i.test(location.path)
+				? await this.getManifest(location)
+				: await this.webExtensionsScannerService.scanExtensionManifest(location);
 		if (!manifest || !manifest.name || !manifest.version) {
 			throw new Error(`Cannot find a valid extension from the location ${location.toString()}`);
 		}
@@ -391,7 +392,12 @@ export class WebExtensionManagementService
 		extension: ILocalExtension,
 		options: UninstallExtensionTaskOptions
 	): IUninstallExtensionTask {
-		return new UninstallExtensionTask(extension, options, this.webExtensionsScannerService, this.userDataProfilesService);
+		return new UninstallExtensionTask(
+			extension,
+			options,
+			this.webExtensionsScannerService,
+			this.userDataProfilesService
+		);
 	}
 
 	zip(_extension: ILocalExtension): Promise<URI> {
@@ -520,7 +526,12 @@ class InstallExtensionTask extends AbstractExtensionTask<ILocalExtension> implem
 			? this.userDataProfilesService.defaultProfile.extensionsResource
 			: this.options.profileLocation;
 		let location = this.extension;
-		if (URI.isUri(location) && location.scheme === 'file' && /\.vsix$/i.test(location.path) && (globalThis as any).__SIDEX_TAURI__ === true) {
+		if (
+			URI.isUri(location) &&
+			location.scheme === 'file' &&
+			/\.vsix$/i.test(location.path) &&
+			(globalThis as any).__SIDEX_TAURI__ === true
+		) {
 			const { invoke } = await import('@tauri-apps/api/core');
 			const installed = await invoke<{ path: string }>('install_extension', { vsixPath: location.fsPath });
 			location = URI.file(installed.path);
@@ -545,18 +556,23 @@ class UninstallExtensionTask extends AbstractExtensionTask<void> implements IUni
 
 	protected async doRun(_token: CancellationToken): Promise<void> {
 		if ((globalThis as any).__SIDEX_TAURI__ === true) {
-			const otherProfiles = this.userDataProfilesService.profiles.filter(profile => profile.extensionsResource.toString() !== this.options.profileLocation.toString());
+			const otherProfiles = this.userDataProfilesService.profiles.filter(
+				profile => profile.extensionsResource.toString() !== this.options.profileLocation.toString()
+			);
 			const defaultProfileLocation = this.userDataProfilesService.defaultProfile.extensionsResource.toString();
-			const usedElsewhere = await Promise.all(otherProfiles.map(async profile => {
-				const extensions = await this.webExtensionsScannerService.scanUserExtensions(profile.extensionsResource);
-				const isDefaultProfile = profile.extensionsResource.toString() === defaultProfileLocation;
-				return extensions.some(extension =>
-					areSameExtensions(extension.identifier, this.extension.identifier) &&
-					// Application-scoped entries belong to the default profile. Other
-					// profiles inherit them from the very entry being uninstalled.
-					(!extension.metadata?.isApplicationScoped || isDefaultProfile)
-				);
-			}));
+			const usedElsewhere = await Promise.all(
+				otherProfiles.map(async profile => {
+					const extensions = await this.webExtensionsScannerService.scanUserExtensions(profile.extensionsResource);
+					const isDefaultProfile = profile.extensionsResource.toString() === defaultProfileLocation;
+					return extensions.some(
+						extension =>
+							areSameExtensions(extension.identifier, this.extension.identifier) &&
+							// Application-scoped entries belong to the default profile. Other
+							// profiles inherit them from the very entry being uninstalled.
+							(!extension.metadata?.isApplicationScoped || isDefaultProfile)
+					);
+				})
+			);
 			if (!usedElsewhere.some(Boolean)) {
 				const { invoke } = await import('@tauri-apps/api/core');
 				await invoke('uninstall_extension', { extensionId: this.extension.identifier.id });

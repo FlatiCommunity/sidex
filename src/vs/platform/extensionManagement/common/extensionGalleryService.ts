@@ -1586,7 +1586,7 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 			const { extensions, total } = await this.queryGalleryExtensions(
 				query,
 				{
-					targetPlatform: (await getCurrentExtensionTargetPlatform()),
+					targetPlatform: await getCurrentExtensionTargetPlatform(),
 					compatible: false,
 					includePreRelease: !!options.includePreRelease,
 					productVersion: options.productVersion ?? {
@@ -2570,7 +2570,10 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 
 		const result: IGalleryExtensionVersion[] = [];
 		const seen = new Map<string, number>();
-		for (const version of sortExtensionVersions(versions, onlyCompatible?.targetPlatform ?? (await getCurrentExtensionTargetPlatform()))) {
+		for (const version of sortExtensionVersions(
+			versions,
+			onlyCompatible?.targetPlatform ?? (await getCurrentExtensionTargetPlatform())
+		)) {
 			const index = seen.get(version.version);
 			const existing = index !== undefined ? result[index] : undefined;
 			const targetPlatform = getTargetPlatformForExtensionVersion(version);

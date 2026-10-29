@@ -173,11 +173,13 @@ registerAction2(
 				if (type === 'ssh') {
 					const host = payload as SshHost;
 					await connectSshWorkspace(host, accessor.get(IQuickInputService), remoteService, accessor.get(IHostService));
-				}
-				else if (type === 'wsl') {
-					await openWslWorkspace((payload as WslDistro).name, accessor.get(IQuickInputService), accessor.get(IHostService));
-				}
-				else {
+				} else if (type === 'wsl') {
+					await openWslWorkspace(
+						(payload as WslDistro).name,
+						accessor.get(IQuickInputService),
+						accessor.get(IHostService)
+					);
+				} else {
 					notifications.notify({
 						severity: Severity.Info,
 						message: localize('remote.notImplemented', 'Remote connect for {0} coming soon', type)
@@ -368,14 +370,25 @@ registerAction2(
 	}
 );
 
-registerAction2(class ConnectSshHost extends Action2 {
-	constructor() {
-		super({ id: 'sidex.remote.connectSsh', title: localize2('remote.ssh.connect', 'Connect to SSH Host…'), f1: true });
+registerAction2(
+	class ConnectSshHost extends Action2 {
+		constructor() {
+			super({
+				id: 'sidex.remote.connectSsh',
+				title: localize2('remote.ssh.connect', 'Connect to SSH Host…'),
+				f1: true
+			});
+		}
+		async run(accessor: ServicesAccessor): Promise<void> {
+			await pickAndConnectSsh(
+				accessor.get(IQuickInputService),
+				accessor.get(INotificationService),
+				accessor.get(ISideXRemoteService),
+				accessor.get(IHostService)
+			);
+		}
 	}
-	async run(accessor: ServicesAccessor): Promise<void> {
-		await pickAndConnectSsh(accessor.get(IQuickInputService), accessor.get(INotificationService), accessor.get(ISideXRemoteService), accessor.get(IHostService));
-	}
-});
+);
 
 // ── Remote-type connect flows ────────────────────────────────────────────────
 
@@ -464,7 +477,10 @@ async function openWslWorkspace(distro: string, quickInput: IQuickInputService, 
 	const path = await quickInput.input({
 		value: home,
 		prompt: localize('remote.wsl.folderPrompt', 'Linux folder to open in {0}', distro),
-		validateInput: async value => value.startsWith('/') ? undefined : localize('remote.wsl.absolutePath', 'Enter an absolute Linux path, such as /home/user/project.')
+		validateInput: async value =>
+			value.startsWith('/')
+				? undefined
+				: localize('remote.wsl.absolutePath', 'Enter an absolute Linux path, such as /home/user/project.')
 	});
 	if (!path) {
 		return;
@@ -473,7 +489,9 @@ async function openWslWorkspace(distro: string, quickInput: IQuickInputService, 
 	if ((info.type & 2) === 0) {
 		throw new Error(localize('remote.wsl.folderRequired', 'The selected Linux path is not a folder.'));
 	}
-	await host.openWindow([{ folderUri: URI.from({ scheme: WSL_SCHEME, authority: distro, path }) }], { forceNewWindow: true });
+	await host.openWindow([{ folderUri: URI.from({ scheme: WSL_SCHEME, authority: distro, path }) }], {
+		forceNewWindow: true
+	});
 }
 
 async function pickAndAttachContainer(

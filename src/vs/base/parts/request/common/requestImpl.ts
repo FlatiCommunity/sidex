@@ -23,10 +23,13 @@ export async function request(
 	// or AbortSignal.timeout. One controller also lets us release the timeout
 	// as soon as the response body has finished, rather than retaining it.
 	let timedOut = false;
-	const timeout = options.timeout && options.timeout > 0 ? setTimeout(() => {
-		timedOut = true;
-		cancellation.abort();
-	}, options.timeout) : undefined;
+	const timeout =
+		options.timeout && options.timeout > 0
+			? setTimeout(() => {
+					timedOut = true;
+					cancellation.abort();
+				}, options.timeout)
+			: undefined;
 
 	try {
 		const fetchInit: RequestInit = {

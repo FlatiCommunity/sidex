@@ -162,7 +162,13 @@ export class SideXRemoteService {
 		return raw.map(toHost);
 	}
 
-	async connectSsh(host: string, user: string, port: number | undefined, auth: SshAuth, trustedFingerprint?: string): Promise<RemoteConnection> {
+	async connectSsh(
+		host: string,
+		user: string,
+		port: number | undefined,
+		auth: SshAuth,
+		trustedFingerprint?: string
+	): Promise<RemoteConnection> {
 		const raw = await invoke<RawConnection>('remote_connect_ssh', {
 			host,
 			user,

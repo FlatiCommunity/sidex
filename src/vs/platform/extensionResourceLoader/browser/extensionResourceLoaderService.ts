@@ -45,7 +45,10 @@ class ExtensionResourceLoaderService extends AbstractExtensionResourceLoaderServ
 		// Native extension files belong to the registered filesystem provider.
 		// Converting them to sidex-asset first made macOS/Linux dispatch the
 		// custom protocol to a nonexistent filesystem provider.
-		if ((globalThis as any).__SIDEX_TAURI__ && (uri.scheme === Schemas.file || uri.scheme === Schemas.vscodeFileResource)) {
+		if (
+			(globalThis as any).__SIDEX_TAURI__ &&
+			(uri.scheme === Schemas.file || uri.scheme === Schemas.vscodeFileResource)
+		) {
 			const result = await this._fileService.readFile(FileAccess.uriToFileUri(uri));
 			return result.value.toString();
 		}

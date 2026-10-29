@@ -198,7 +198,9 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 		this._events.dispose();
 		try {
 			if (this._backendId !== undefined && _invoke) {
-				_invoke(this._sshAuthority ? 'remote_ssh_terminal_kill' : 'terminal_kill', { terminalId: this._backendId }).catch(() => {});
+				_invoke(this._sshAuthority ? 'remote_ssh_terminal_kill' : 'terminal_kill', {
+					terminalId: this._backendId
+				}).catch(() => {});
 			}
 			this._unlisten?.();
 			this._unlistenExit?.();
@@ -211,7 +213,10 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 
 	input(data: string): void {
 		if (this._backendId !== undefined && _invoke) {
-			_invoke(this._sshAuthority ? 'remote_ssh_terminal_write' : 'terminal_write', { terminalId: this._backendId, data }).catch(() => {});
+			_invoke(this._sshAuthority ? 'remote_ssh_terminal_write' : 'terminal_write', {
+				terminalId: this._backendId,
+				data
+			}).catch(() => {});
 		}
 	}
 
@@ -219,13 +224,20 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 		this._cols = cols;
 		this._rows = rows;
 		if (this._backendId !== undefined && _invoke) {
-			_invoke(this._sshAuthority ? 'remote_ssh_terminal_resize' : 'terminal_resize', { terminalId: this._backendId, cols, rows }).catch(() => {});
+			_invoke(this._sshAuthority ? 'remote_ssh_terminal_resize' : 'terminal_resize', {
+				terminalId: this._backendId,
+				cols,
+				rows
+			}).catch(() => {});
 		}
 	}
 
 	acknowledgeDataEvent(charCount: number): void {
 		if (this._backendId !== undefined) {
-			_invoke?.(this._sshAuthority ? 'remote_ssh_terminal_acknowledge' : 'terminal_acknowledge', { terminalId: this._backendId, charCount }).catch(() => {});
+			_invoke?.(this._sshAuthority ? 'remote_ssh_terminal_acknowledge' : 'terminal_acknowledge', {
+				terminalId: this._backendId,
+				charCount
+			}).catch(() => {});
 		}
 	}
 	async processBinary(data: string): Promise<void> {
@@ -312,8 +324,16 @@ class TauriTerminalBackend extends Disposable implements ITerminalBackend {
 	): Promise<ITerminalChildProcess> {
 		const workspace = getNativeWorkspace();
 		if (workspace?.scheme === 'sidex-ssh') {
-			const explicitCwd = typeof shellLaunchConfig.cwd === 'string' ? shellLaunchConfig.cwd : shellLaunchConfig.cwd?.path;
-			return new TauriPty(shellLaunchConfig, explicitCwd?.startsWith('/') ? explicitCwd : workspace.path, cols, rows, undefined, workspace.authority);
+			const explicitCwd =
+				typeof shellLaunchConfig.cwd === 'string' ? shellLaunchConfig.cwd : shellLaunchConfig.cwd?.path;
+			return new TauriPty(
+				shellLaunchConfig,
+				explicitCwd?.startsWith('/') ? explicitCwd : workspace.path,
+				cols,
+				rows,
+				undefined,
+				workspace.authority
+			);
 		}
 		if (workspace?.scheme === 'sidex-wsl') {
 			const explicitCwd =

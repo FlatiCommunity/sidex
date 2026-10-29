@@ -378,7 +378,10 @@ export class ThemeRegistry<T extends IThemeData> implements IDisposable {
 
 	public getThemes(): T[] {
 		const installedSettings = new Set(this.extensionThemes.map(theme => theme.settingsId));
-		return [...this.listedBuiltInThemes.filter(theme => !installedSettings.has(theme.settingsId)), ...this.extensionThemes];
+		return [
+			...this.listedBuiltInThemes.filter(theme => !installedSettings.has(theme.settingsId)),
+			...this.extensionThemes
+		];
 	}
 
 	public getMarketplaceThemes(manifest: any, extensionLocation: URI, extensionData: ExtensionData): T[] {

@@ -27,11 +27,15 @@ export class ExtensionManagementServerService implements IExtensionManagementSer
 			const extensionManagementService = instantiationService.createInstance(WebExtensionManagementService);
 			if ((globalThis as any).__SIDEX_TAURI__ === true) {
 				this.localExtensionManagementServer = {
-					id: 'local', extensionManagementService, label: localize('local', 'Local')
+					id: 'local',
+					extensionManagementService,
+					label: localize('local', 'Local')
 				};
 			} else {
 				this.webExtensionManagementServer = {
-					id: 'web', extensionManagementService, label: localize('browser', 'Browser')
+					id: 'web',
+					extensionManagementService,
+					label: localize('browser', 'Browser')
 				};
 			}
 		}

@@ -16,17 +16,19 @@ export async function getCurrentExtensionTargetPlatform(): Promise<TargetPlatfor
 		return isWeb ? TargetPlatform.WEB : getTargetPlatform(platform, arch);
 	}
 	if (!nativePlatform) {
-		nativePlatform = import('@tauri-apps/api/core').then(async ({ invoke }) => {
-			const value = await invoke<string>('extension_get_target_platform');
-			const target = toTargetPlatform(value);
-			if (target === TargetPlatform.UNKNOWN || target === TargetPlatform.UNDEFINED) {
-				throw new Error(`Unsupported native extension platform: ${value}`);
-			}
-			return target;
-		}).catch(error => {
-			nativePlatform = undefined;
-			throw error;
-		});
+		nativePlatform = import('@tauri-apps/api/core')
+			.then(async ({ invoke }) => {
+				const value = await invoke<string>('extension_get_target_platform');
+				const target = toTargetPlatform(value);
+				if (target === TargetPlatform.UNKNOWN || target === TargetPlatform.UNDEFINED) {
+					throw new Error(`Unsupported native extension platform: ${value}`);
+				}
+				return target;
+			})
+			.catch(error => {
+				nativePlatform = undefined;
+				throw error;
+			});
 	}
 	return nativePlatform;
 }

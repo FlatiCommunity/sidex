@@ -109,10 +109,7 @@ function getWorkerBootstrapUrl(
 	workerLoadingFailedErrorMessage: string | undefined
 ): string {
 	const workerUrl = new URL(workerScriptUrl);
-	if (
-		['http:', 'https:', 'file:'].includes(workerUrl.protocol) &&
-		workerUrl.origin !== globalThis.origin
-	) {
+	if (['http:', 'https:', 'file:'].includes(workerUrl.protocol) && workerUrl.origin !== globalThis.origin) {
 		// this is the cross-origin case
 		// i.e. the webpage is running at a different origin than where the scripts are loaded from
 	} else {

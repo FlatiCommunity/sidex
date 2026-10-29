@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use serde_json::Value;
-use sidex_settings::{Settings, modify_jsonc, parse_jsonc, persist_setting};
+use sidex_settings::{modify_jsonc, parse_jsonc, persist_setting, Settings};
 use tauri::{AppHandle, State};
 
 pub struct SettingsStore {
